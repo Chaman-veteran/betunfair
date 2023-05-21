@@ -5,10 +5,10 @@ defmodule BetUnfair do
   use GenServer
 
   @type user_id :: String.t()
-  @type bet :: String.t()
-  @type users :: [{id :: String.t(), user :: user_id(), balance :: integer}]
+  @type bet_id :: String.t()
+  @type users :: [{id :: String.t(), user :: user_id(), balance :: integer, [bet_id()]}]
   # A market is defined by the participants to a bet
-  @type market :: %{bet() => users()}
+  @type market :: %{bet_id() => users()}
 
   ################################
   #### EXCHANGES INTERACTIONS ####
@@ -108,9 +108,9 @@ defmodule BetUnfair do
   @spec user_create(id :: String.t(), name :: String.t()) :: {:ok | :error, user_id()}
   def user_create(id, name) do
     users = Process.get(:users)
-    previous = List.keyfind(users, id, 0)
-    if previous == :nil do
-      updated_users = [{id, name, 0} | users]
+    user = List.keyfind(users, id, 0)
+    if user == :nil do
+      updated_users = [{id, name, 0, []} | users]
       Process.put(:users, updated_users)
       {:ok, id}
     else
@@ -137,13 +137,13 @@ defmodule BetUnfair do
   @spec user_deposit(id :: user_id(), amount :: integer()):: :ok | :error
   def user_deposit(id, amount) do
     users = Process.get(:users)
-    previous = List.keyfind(users, id, 0)
-    if previous == :nil or amount < 0 do
+    user = List.keyfind(users, id, 0)
+    if user == :nil or amount < 0 do
       # The user do not exist
       :error
     else
-      new_amount = elem(previous,2)+amount
-      updated_users = List.keyreplace(users, id, 0, {id, elem(previous,1), new_amount})
+      new_amount = elem(user,2)+amount
+      updated_users = List.keyreplace(users, id, 0, {id, elem(user,1), new_amount, elem(user,3)})
       Process.put(:users, updated_users)
       :ok
     end
@@ -171,14 +171,14 @@ defmodule BetUnfair do
   @spec user_withdraw(id :: user_id(), amount :: integer()):: :ok | :error
   def user_withdraw(id, amount) do
     users = Process.get(:users)
-    previous = List.keyfind(users, id, 0)
+    user = List.keyfind(users, id, 0)
     # Remark : we use the laziness of the or to call elem
-    if previous == :nil or amount > elem(previous,1) do
+    if user == :nil or amount > elem(user,1) do
       # The user do not exist
       :error
     else
-      new_amount = elem(previous,2)-amount
-      updated_users = List.keyreplace(users, id, 0, {id, elem(previous,1), new_amount})
+      new_amount = elem(user,2)-amount
+      updated_users = List.keyreplace(users, id, 0, {id, elem(user,1), new_amount, elem(user,3)})
       Process.put(:users, updated_users)
       :ok
     end
@@ -205,7 +205,30 @@ defmodule BetUnfair do
     if user == :nil do
       {:error}
     else
-      {:ok, {elem(user,1), id, elem(user,2)}}
+      {:ok, {elem(user,1), id, elem(user,2), elem(user,3)}}
+    end
+  end
+
+  @doc """
+  Returns an enumerable containing all bets of the user.
+
+  ## Parameters
+    - id, the string that identifies the user
+
+  ## Examples
+
+      iex> Betunfair.user_get("Alice",15)
+      ["Madrid - Barca", "Paris - Marseille"]
+
+  """
+  @spec user_bets(id :: user_id()) :: Enumerable.t(bet_id())
+  def user_bets(id) do
+    users = Process.get(:users)
+    user = List.keyfind(users, id, 0)
+    if user == :nil do
+      []
+    else
+      elem(user,3)
     end
   end
 

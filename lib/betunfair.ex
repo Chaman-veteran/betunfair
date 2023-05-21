@@ -4,11 +4,16 @@ defmodule BetUnfair do
   """
   use GenServer
 
+  @type user_id :: String.t()
   @type bet :: String.t()
-  @type participants :: list
-  @type market :: tuple
+  @type users :: [{user :: user_id(), balance :: integer}]
+  # A market is defined by it's users registered and the
+  # participants to a bet
+  @type market :: {users(), %{bet() => users()}}
 
+  ################################
   #### EXCHANGES INTERACTIONS ####
+  ################################
 
   @doc """
   Start of the exchange place.
@@ -24,28 +29,19 @@ defmodule BetUnfair do
       {:ok, %{}}
 
   """
-  @spec start_link(name :: String.t()) :: {:ok, market}
+  @spec start_link(name :: String.t()) :: {:ok, market()}
   def start_link(name) do
-    # Remark :
-    {:ok, market_pid} = GenServer.start_link(BetUnfair, %{})
+    {:ok, market_pid} = GenServer.start_link(BetUnfair, {[],%{}})
     Process.put(:market_server, market_pid)
     Process.put(name, market_pid)
     {:ok, market_pid}
   end
 
   @doc """
+  GenServer function associated to start_link.
   Initialize the GenServer state.
-
-  ## Parameters
-    - market, the initial state of the market
-
-  ## Examples
-
-      iex> Betunfair.init(%{})
-      {:ok, %{}}
-
   """
-  @spec init(market :: market) :: {:ok, market}
+  @spec init(market :: market()) :: {:ok, market()}
   def init(market) do
     {:ok, market}
   end
@@ -85,6 +81,86 @@ defmodule BetUnfair do
     GenServer.stop(Process.get(name))
     Process.delete(name)
     :ok
+  end
+
+  ##########################
+  #### User interaction ####
+  ##########################
+
+  @doc """
+  Adds a user to the exchange.
+  The id parameter must be unique
+  (e.g., a DNI/passport number, email, username).
+  Fails, for instance, if a user with the same id already exists.
+  Returns a user identifier (you may choose its representation)
+
+  ## Parameters
+    - id, the string that identifies the user
+    - name, the name of the
+
+  ## Examples
+
+      iex> Betunfair.create_user("Alice","Futball")
+      {:ok, "Alice"}
+      iex> Betunfair.create_user("Alice","Futball")
+      {:error, "Alice"}
+
+  """
+  @spec user_create(id :: String.t(), name :: String.t()) :: {:ok | :error, user_id()}
+  def user_create(id, name) do
+    market_pid = Process.get(name)
+    GenServer.call(market_pid, {:user_create, id})
+  end
+
+  @doc """
+  GenServer function associated to user_create.
+  Adds a user to the exchange state.
+  """
+  def handle_call({:user_create, id}, _from, {users, bets}) do
+    previous = List.keyfind(users, id, 0)
+    if previous == :nil do
+      {:reply, {:ok, id}, {[{id, 0} | users], bets}}
+    else
+      # The user already exists
+      {:reply, {:error, id}, {users, bets}}
+    end
+  end
+
+  @doc """
+  Adds amount (should be positive) to the user account.
+
+  ## Parameters
+    - id, the string that identifies the user
+    - amount, the amount to deposit
+
+  ## Examples
+
+      iex> Betunfair.user_deposit("Alice",15)
+      {:ok, 15}
+      iex> Betunfair.create_user("Alice",-1)
+      {:error, 15}
+
+  """
+  @spec user_deposit(id :: user_id(), amount :: integer()):: :ok | :error
+  def user_deposit(id, amount) do
+    market_pid = Process.get(name)
+    GenServer.call(market_pid, {:user_deposit, id})
+  end
+
+  @doc """
+  GenServer function associated to user_deposit.
+  Adds an amount of money to the user balance.
+  """
+  def handle_call({:user_deposit, id, amount}, _from, {users, bets}) do
+    previous = List.keyfind(users, id, 0)
+    if previous == :nil or amount < 0 do
+      # The user do not exist
+      {:reply, :error, {users, bets}}
+    else
+      new_amount = elem(previous,1)+amount
+      updated_users = List.keyreplace(users, id, 0, {id, new_amount})
+      {:reply, :ok, {updated_users, bets}}
+    end
   end
 
 end

@@ -6,10 +6,9 @@ defmodule BetUnfair do
 
   @type user_id :: String.t()
   @type bet :: String.t()
-  @type users :: [{user :: user_id(), balance :: integer}]
-  # A market is defined by it's users registered and the
-  # participants to a bet
-  @type market :: {users(), %{bet() => users()}}
+  @type users :: [{id :: String.t(), user :: user_id(), balance :: integer}]
+  # A market is defined by the participants to a bet
+  @type market :: %{bet() => users()}
 
   ################################
   #### EXCHANGES INTERACTIONS ####
@@ -108,21 +107,15 @@ defmodule BetUnfair do
   """
   @spec user_create(id :: String.t(), name :: String.t()) :: {:ok | :error, user_id()}
   def user_create(id, name) do
-    market_pid = Process.get(name)
-    GenServer.call(market_pid, {:user_create, id})
-  end
-
-  @doc """
-  GenServer function associated to user_create.
-  Adds a user to the exchange state.
-  """
-  def handle_call({:user_create, id}, _from, {users, bets}) do
+    users = Process.get(:users)
     previous = List.keyfind(users, id, 0)
     if previous == :nil do
-      {:reply, {:ok, id}, {[{id, 0} | users], bets}}
+      updated_users = [{id, name, 0} | users]
+      Process.put(:users, updated_users)
+      {:ok, id}
     else
       # The user already exists
-      {:reply, {:error, id}, {users, bets}}
+      {:error, id}
     end
   end
 
@@ -136,30 +129,83 @@ defmodule BetUnfair do
   ## Examples
 
       iex> Betunfair.user_deposit("Alice",15)
-      {:ok, 15}
+      :ok
       iex> Betunfair.create_user("Alice",-1)
-      {:error, 15}
+      :error
 
   """
   @spec user_deposit(id :: user_id(), amount :: integer()):: :ok | :error
   def user_deposit(id, amount) do
-    market_pid = Process.get(name)
-    GenServer.call(market_pid, {:user_deposit, id})
-  end
-
-  @doc """
-  GenServer function associated to user_deposit.
-  Adds an amount of money to the user balance.
-  """
-  def handle_call({:user_deposit, id, amount}, _from, {users, bets}) do
+    users = Process.get(:users)
     previous = List.keyfind(users, id, 0)
     if previous == :nil or amount < 0 do
       # The user do not exist
-      {:reply, :error, {users, bets}}
+      :error
     else
-      new_amount = elem(previous,1)+amount
-      updated_users = List.keyreplace(users, id, 0, {id, new_amount})
-      {:reply, :ok, {updated_users, bets}}
+      new_amount = elem(previous,2)+amount
+      updated_users = List.keyreplace(users, id, 0, {id, elem(previous,1), new_amount})
+      Process.put(:users, updated_users)
+      :ok
+    end
+  end
+
+  @doc """
+  Withdraw amount to the user account.
+  The amount should be positive,
+  and the account balance must be at least amount.
+
+  ## Parameters
+    - id, the string that identifies the user
+    - amount, the amount to withdraw
+
+  ## Examples
+
+      iex> Betunfair.user_deposit("Alice",15)
+      :ok
+      iex> Betunfair.create_user("Alice",-1)
+      :error
+      iex> Betunfair.create_user("Alice",20)
+      :ok
+
+  """
+  @spec user_withdraw(id :: user_id(), amount :: integer()):: :ok | :error
+  def user_withdraw(id, amount) do
+    users = Process.get(:users)
+    previous = List.keyfind(users, id, 0)
+    # Remark : we use the laziness of the or to call elem
+    if previous == :nil or amount > elem(previous,1) do
+      # The user do not exist
+      :error
+    else
+      new_amount = elem(previous,2)-amount
+      updated_users = List.keyreplace(users, id, 0, {id, elem(previous,1), new_amount})
+      Process.put(:users, updated_users)
+      :ok
+    end
+  end
+
+  @doc """
+  Retrieves information about a user.
+
+  ## Parameters
+    - id, the string that identifies the user
+
+  ## Examples
+
+      iex> Betunfair.user_get("Alice",15)
+      {:ok, %{"Alice", "Alice01", 15}}
+
+  """
+  @spec user_get(id :: user_id()) ::
+          {:ok, %{name: String.t(), id: user_id(), balance: integer()}} | {:error}
+  ## Remark : error in the stated signature ?? Shouldn't it be {:ok, {...}} instead of {:ok, %{...}}
+  def user_get(id) do
+    users = Process.get(:users)
+    user = List.keyfind(users, id, 0)
+    if user == :nil do
+      {:error}
+    else
+      {:ok, {elem(user,1), id, elem(user,2)}}
     end
   end
 

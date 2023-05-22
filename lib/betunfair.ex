@@ -6,8 +6,9 @@ defmodule BetUnfair do
 
   @type user_id :: String.t()
   @type bet_id :: String.t()
-  @type users :: %{id :: user_id() => {user :: String.t(), balance :: integer, [bet_id()]}}
+  @type users :: %{user_id() => {user :: String.t(), balance :: integer, [bet_id()]}}
   # A market is defined by the participants to a bet
+  @type market_id :: pid()
   @type market :: %{bet_id() => users()}
 
   ################################
@@ -24,17 +25,14 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.start_link(Futbol)
+      iex> Betunfair.start_link("Futbol")
       {:ok, %{}}
 
   """
   @spec start_link(name :: String.t()) :: {:ok, market()}
   def start_link(name) do
     if Process.get(name) == :nil do
-      {:ok, market_pid} = GenServer.start_link(BetUnfair, %{})
-      Process.put(:market_server, market_pid)
-      Process.put(name, market_pid)
-      {:ok, market_pid}
+      market_create(name, :nil)
     else
       # TODO : recover the existing data
     end
@@ -75,13 +73,14 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.clean(Futbol)
+      iex> Betunfair.clean("Futbol")
       :ok
 
   """
   @spec clean(name :: String.t()):: :ok
   def clean(name) do
-    GenServer.stop(Process.get(name))
+    {_description, market_id, _} = Process.get(name)
+    GenServer.stop(market_id)
     Process.delete(name)
     :ok
   end
@@ -103,10 +102,10 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.create_user(Alice,Alice99)
-      {:ok, Alice}
-      iex> Betunfair.create_user(Alice,Alice01)
-      {:error, Alice}
+      iex> Betunfair.create_user("Alice","Alice99")
+      {:ok, "Alice"}
+      iex> Betunfair.create_user("Alice","Alice01")
+      {:error, "Alice"}
 
   """
   @spec user_create(id :: String.t(), name :: String.t()) :: {:ok | :error, user_id()}
@@ -131,9 +130,9 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.user_deposit(Alice,15)
+      iex> Betunfair.user_deposit("Alice",15)
       :ok
-      iex> Betunfair.create_user(Alice,-1)
+      iex> Betunfair.create_user("Alice",-1)
       :error
 
   """
@@ -163,11 +162,11 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.user_deposit(Alice,15)
+      iex> Betunfair.user_deposit("Alice",15)
       :ok
-      iex> Betunfair.create_user(Alice,-1)
+      iex> Betunfair.create_user("Alice",-1)
       :error
-      iex> Betunfair.create_user(Alice,20)
+      iex> Betunfair.create_user("Alice",20)
       :ok
 
   """
@@ -198,8 +197,8 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.user_get(Alice, 15)
-      {:ok, %{Alice, Alice01, 15}}
+      iex> Betunfair.user_get("Alice", 15)
+      {:ok, %{"Alice", "Alice01", 15}}
 
   """
   @spec user_get(id :: user_id()) ::
@@ -223,8 +222,8 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.user_get(Alice,15)
-      [Madrid - Barca, Paris - Marseille]
+      iex> Betunfair.user_get("Alice",15)
+      ["Madrid - Barca", "Paris - Marseille"]
 
   """
   @spec user_bets(id :: user_id()) :: Enumerable.t(bet_id())
@@ -236,6 +235,79 @@ defmodule BetUnfair do
     else
       []
     end
+  end
+
+  ############################
+  #### MARKET INTERACTION ####
+  ############################
+
+  defp filter([],_) do
+    []
+  end
+  defp filter([head | tail], p) do
+    if p.(head) do
+      [head | filter(tail, p)]
+    else
+      filter(tail,p)
+    end
+  end
+
+  @doc """
+  Creates a market with the unique name,
+  and a potentially longer description.
+  All market created are on by default.
+
+  ## Parameters
+    - name, the name of the market
+    - description, a description of it
+
+  ## Examples
+
+      iex> Betunfair.market_create("Futbol", "Market place for futbol bets")
+      {:ok, #PID<_>}
+
+  """
+  @spec market_create(name :: String.t(), description :: String.t()) :: {:ok, market_id()}
+  def market_create(name, description) do
+    {:ok, market_pid} = GenServer.start_link(BetUnfair, %{})
+    Process.put(:market_server, market_pid)
+    # process : %{market_id => {description, market_pid, on?}}
+    Process.put(name, {description, market_pid, :on})
+    {:ok, market_pid}
+  end
+
+  @doc """
+  Returns all markets.
+
+  ## Examples
+
+      iex> Betunfair.market_list()
+      {:ok, [#PID<_>]}
+
+  """
+  @spec market_list() :: {:ok, [market_id()]}
+  def market_list() do
+    valide_market = &(&1 != :users &&  &1 != :market_server)
+    list_markets = filter(Process.get_keys(), valide_market)
+    {:ok, list_markets}
+  end
+
+
+  @doc """
+  Returns all active markets.
+
+  ## Examples
+
+      iex> Betunfair.market_list_active()
+      {:ok, [#PID<_>]}
+
+  """
+  @spec market_list_active() :: {:ok, [market_id()]}
+  def market_list_active() do
+    list_markets = Process.get()
+    valide_market = &(elem(&1,2) == :on)
+    filter(list_markets, valide_market)
+    {:ok, }
   end
 
 end

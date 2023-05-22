@@ -24,16 +24,20 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.start_link("Futball")
+      iex> Betunfair.start_link(Futbol)
       {:ok, %{}}
 
   """
   @spec start_link(name :: String.t()) :: {:ok, market()}
   def start_link(name) do
-    {:ok, market_pid} = GenServer.start_link(BetUnfair, %{})
-    Process.put(:market_server, market_pid)
-    Process.put(name, market_pid)
-    {:ok, market_pid}
+    if Process.get(name) == :nil do
+      {:ok, market_pid} = GenServer.start_link(BetUnfair, %{})
+      Process.put(:market_server, market_pid)
+      Process.put(name, market_pid)
+      {:ok, market_pid}
+    else
+      # TODO : recover the existing data
+    end
   end
 
   @doc """
@@ -71,7 +75,7 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.clean("Futball")
+      iex> Betunfair.clean(Futbol)
       :ok
 
   """
@@ -83,7 +87,7 @@ defmodule BetUnfair do
   end
 
   ##########################
-  #### User interaction ####
+  #### USER INTERACTION ####
   ##########################
 
   @doc """
@@ -99,15 +103,15 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.create_user("Alice","Futball")
-      {:ok, "Alice"}
-      iex> Betunfair.create_user("Alice","Futball")
-      {:error, "Alice"}
+      iex> Betunfair.create_user(Alice,Alice99)
+      {:ok, Alice}
+      iex> Betunfair.create_user(Alice,Alice01)
+      {:error, Alice}
 
   """
   @spec user_create(id :: String.t(), name :: String.t()) :: {:ok | :error, user_id()}
   def user_create(id, name) do
-    users = Process.get(:users)
+    users = Process.get(:users, %{})
     if Map.has_key?(users,id) do
       # The user already exists
       {:error, id}
@@ -127,9 +131,9 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.user_deposit("Alice",15)
+      iex> Betunfair.user_deposit(Alice,15)
       :ok
-      iex> Betunfair.create_user("Alice",-1)
+      iex> Betunfair.create_user(Alice,-1)
       :error
 
   """
@@ -159,11 +163,11 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.user_deposit("Alice",15)
+      iex> Betunfair.user_deposit(Alice,15)
       :ok
-      iex> Betunfair.create_user("Alice",-1)
+      iex> Betunfair.create_user(Alice,-1)
       :error
-      iex> Betunfair.create_user("Alice",20)
+      iex> Betunfair.create_user(Alice,20)
       :ok
 
   """
@@ -191,8 +195,8 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.user_get("Alice",15)
-      {:ok, %{"Alice", "Alice01", 15}}
+      iex> Betunfair.user_get(Alice, 15)
+      {:ok, %{Alice, Alice01, 15}}
 
   """
   @spec user_get(id :: user_id()) ::
@@ -216,14 +220,14 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.user_get("Alice",15)
-      ["Madrid - Barca", "Paris - Marseille"]
+      iex> Betunfair.user_get(Alice,15)
+      [Madrid - Barca, Paris - Marseille]
 
   """
   @spec user_bets(id :: user_id()) :: Enumerable.t(bet_id())
   def user_bets(id) do
     users = Process.get(:users)
-    user = List.keyfind(users, id, 0)
+    user = Map.fetch(users, id)
     if user == :nil do
       []
     else

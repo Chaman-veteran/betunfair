@@ -6,7 +6,7 @@ defmodule BetUnfair do
 
   @type user_id :: String.t()
   @type bet_id :: String.t()
-  @type users :: [{id :: String.t(), user :: user_id(), balance :: integer, [bet_id()]}]
+  @type users :: %{id :: user_id() => {user :: String.t(), balance :: integer, [bet_id()]}}
   # A market is defined by the participants to a bet
   @type market :: %{bet_id() => users()}
 
@@ -30,7 +30,7 @@ defmodule BetUnfair do
   """
   @spec start_link(name :: String.t()) :: {:ok, market()}
   def start_link(name) do
-    {:ok, market_pid} = GenServer.start_link(BetUnfair, {[],%{}})
+    {:ok, market_pid} = GenServer.start_link(BetUnfair, %{})
     Process.put(:market_server, market_pid)
     Process.put(name, market_pid)
     {:ok, market_pid}
@@ -108,14 +108,13 @@ defmodule BetUnfair do
   @spec user_create(id :: String.t(), name :: String.t()) :: {:ok | :error, user_id()}
   def user_create(id, name) do
     users = Process.get(:users)
-    user = List.keyfind(users, id, 0)
-    if user == :nil do
-      updated_users = [{id, name, 0, []} | users]
-      Process.put(:users, updated_users)
-      {:ok, id}
-    else
+    if Map.has_key?(users,id) do
       # The user already exists
       {:error, id}
+    else
+      updated_users = Map.put(users, id, {name, 0, []})
+      Process.put(:users, updated_users)
+      {:ok, id}
     end
   end
 
@@ -137,13 +136,13 @@ defmodule BetUnfair do
   @spec user_deposit(id :: user_id(), amount :: integer()):: :ok | :error
   def user_deposit(id, amount) do
     users = Process.get(:users)
-    user = List.keyfind(users, id, 0)
+    user = Map.fetch(users, id)
     if user == :nil or amount < 0 do
       # The user do not exist
       :error
     else
-      new_amount = elem(user,2)+amount
-      updated_users = List.keyreplace(users, id, 0, {id, elem(user,1), new_amount, elem(user,3)})
+      new_amount = elem(user,1)+amount
+      updated_users = Map.replace(users, id, {elem(user,0), new_amount, elem(user,2)})
       Process.put(:users, updated_users)
       :ok
     end
@@ -171,14 +170,14 @@ defmodule BetUnfair do
   @spec user_withdraw(id :: user_id(), amount :: integer()):: :ok | :error
   def user_withdraw(id, amount) do
     users = Process.get(:users)
-    user = List.keyfind(users, id, 0)
+    user = Map.fetch(users, id)
     # Remark : we use the laziness of the or to call elem
-    if user == :nil or amount > elem(user,1) do
+    if user == :nil or amount > elem(user,0) do
       # The user do not exist
       :error
     else
-      new_amount = elem(user,2)-amount
-      updated_users = List.keyreplace(users, id, 0, {id, elem(user,1), new_amount, elem(user,3)})
+      new_amount = elem(user,1)-amount
+      updated_users = Map.replace(users, id, {elem(user,0), new_amount, elem(user,2)})
       Process.put(:users, updated_users)
       :ok
     end
@@ -201,11 +200,11 @@ defmodule BetUnfair do
   ## Remark : error in the stated signature ?? Shouldn't it be {:ok, {...}} instead of {:ok, %{...}}
   def user_get(id) do
     users = Process.get(:users)
-    user = List.keyfind(users, id, 0)
+    user = Map.fetch(users, id)
     if user == :nil do
       {:error}
     else
-      {:ok, {elem(user,1), id, elem(user,2), elem(user,3)}}
+      {:ok, {elem(user,0), id, elem(user,1), elem(user,2)}}
     end
   end
 
@@ -228,7 +227,7 @@ defmodule BetUnfair do
     if user == :nil do
       []
     else
-      elem(user,3)
+      elem(user,2)
     end
   end
 

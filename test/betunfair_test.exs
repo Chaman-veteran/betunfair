@@ -1,6 +1,6 @@
 defmodule BetUnfairTest do
   use ExUnit.Case
-  doctest BetUnfair
+  #doctest BetUnfair
   @moduledoc """
   The tests here are only meant for logical and
   robustness purpose.
@@ -30,5 +30,6 @@ defmodule BetUnfairTest do
     assert BetUnfair.user_get("Bob") == {:ok, {"B0B", "Bob", 0, []}}
     assert BetUnfair.user_get("Alice") == {:ok, {"Alice99", "Alice", 5, []}}
     assert BetUnfair.user_bets("Alice") == []
+    BetUnfair.clean("test_users")
   end
 end

@@ -140,15 +140,15 @@ defmodule BetUnfair do
   @spec user_deposit(id :: user_id(), amount :: integer()):: :ok | :error
   def user_deposit(id, amount) do
     users = Process.get(:users)
-    user = Map.fetch(users, id)
-    if user == :nil or amount < 0 do
-      # The user do not exist
-      :error
-    else
+    if Map.has_key?(users, id) and amount >= 0 do
+      {:ok, user} = Map.fetch(users, id)
       new_amount = elem(user,1)+amount
       updated_users = Map.replace(users, id, {elem(user,0), new_amount, elem(user,2)})
       Process.put(:users, updated_users)
       :ok
+    else
+      # The user do not exist
+      :error
     end
   end
 
@@ -174,16 +174,19 @@ defmodule BetUnfair do
   @spec user_withdraw(id :: user_id(), amount :: integer()):: :ok | :error
   def user_withdraw(id, amount) do
     users = Process.get(:users)
-    user = Map.fetch(users, id)
-    # Remark : we use the laziness of the or to call elem
-    if user == :nil or amount > elem(user,0) do
+    if Map.has_key?(users, id) do
+      {:ok, user} = Map.fetch(users, id)
+      if amount > elem(user,1) do
+        :error
+      else
+        new_amount = elem(user,1)-amount
+        updated_users = Map.replace(users, id, {elem(user,0), new_amount, elem(user,2)})
+        Process.put(:users, updated_users)
+        :ok
+      end
+    else
       # The user do not exist
       :error
-    else
-      new_amount = elem(user,1)-amount
-      updated_users = Map.replace(users, id, {elem(user,0), new_amount, elem(user,2)})
-      Process.put(:users, updated_users)
-      :ok
     end
   end
 
@@ -200,15 +203,15 @@ defmodule BetUnfair do
 
   """
   @spec user_get(id :: user_id()) ::
-          {:ok, %{name: String.t(), id: user_id(), balance: integer()}} | {:error}
-  ## Remark : error in the stated signature ?? Shouldn't it be {:ok, {...}} instead of {:ok, %{...}}
+          {:ok, {name :: String.t(), id :: user_id(), balance :: integer()}} | {:error}
+  ## Remark : error in the stated signature ?? Shouldn't it be {:ok, {name :: String.t(), ...}} instead of {:ok, %{name: string...}}
   def user_get(id) do
     users = Process.get(:users)
-    user = Map.fetch(users, id)
-    if user == :nil do
-      {:error}
-    else
+    if Map.has_key?(users,id) do
+      {:ok, user} = Map.fetch(users, id)
       {:ok, {elem(user,0), id, elem(user,1), elem(user,2)}}
+    else
+      {:error}
     end
   end
 
@@ -227,11 +230,11 @@ defmodule BetUnfair do
   @spec user_bets(id :: user_id()) :: Enumerable.t(bet_id())
   def user_bets(id) do
     users = Process.get(:users)
-    user = Map.fetch(users, id)
-    if user == :nil do
-      []
-    else
+    if Map.has_key?(users, id) do
+      {:ok, user} = Map.fetch(users, id)
       elem(user,2)
+    else
+      []
     end
   end
 

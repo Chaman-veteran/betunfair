@@ -306,8 +306,29 @@ defmodule BetUnfair do
   def market_list_active() do
     list_markets = Process.get()
     valide_market = &(elem(&1,2) == :on)
-    filter(list_markets, valide_market)
-    {:ok, }
+    list_markets_active = filter(list_markets, valide_market)
+    {:ok, list_markets_actives}
+  end
+
+  @doc """
+  Cancels a non-terminated market.
+  Returns all stakes in matched or unmatched market bets to users.
+
+  ## Examples
+
+      iex> Betunfair.market_cancel(#PID<_>)
+      :ok
+
+  """
+  @spec market_cancel(id :: market_id()):: :ok
+  def market_cancel(id) do
+    market = Process.get(id)
+    if market == :nil do
+      :ok
+    else
+      # Returning all stakes to users
+      ## TODO : needs to better define bets (more than their ids) ##
+    end
   end
 
 end

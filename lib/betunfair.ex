@@ -7,6 +7,8 @@ defmodule BetUnfair do
   # GenServer is used for markets :
   # each market runs with a unique pid & server
   # in order to increase scalability of market places
+  # The users are linked to the whole system and as such
+  # are "stored" using the main module along with the Process module
 
   @type user_id :: String.t()
   @type bet_id :: String.t()
@@ -14,11 +16,11 @@ defmodule BetUnfair do
   # A market is defined by the participants to a bet
   @type market_id :: pid()
   @type market :: %{ name: String.t(),
-                    description: String.t(),
-                    status: :active |
-                    :frozen |
-                    :cancelled |
-                    {:settled, result::bool()}}
+                     description: String.t(),
+                     status: :active |
+                     :frozen |
+                     :cancelled |
+                     {:settled, result::bool()}}
   @type bet :: %{ bet_type: :back | :lay,
                   market_id: market_id(),
                   user_id: user_id(),
@@ -29,8 +31,7 @@ defmodule BetUnfair do
                   status: :active |
                           :cancelled |
                           :market_cancelled |
-                          {:market_settled, boolean()}
-                }
+                          {:market_settled, boolean()}}
   @type market_place :: {market, %{bet_id() => bet()}}
 
   ################################
@@ -92,7 +93,7 @@ defmodule BetUnfair do
   """
   @spec clean(name :: String.t()):: :ok
   def clean(name) do
-    {_description, market_id, _} = Process.get(name)
+    {market_id, _} = Process.get(name)
     market_cancel(market_id)
     GenServer.stop(market_id)
     Process.delete(name)
@@ -282,10 +283,10 @@ defmodule BetUnfair do
   """
   @spec market_create(name :: String.t(), description :: String.t()) :: {:ok, market_id()}
   def market_create(name, description) do
-    {:ok, market_pid} = GenServer.start_link(BetUnfair, %{})
+    {:ok, market_pid} = GenServer.start_link(BetUnfair, {name, description})
     Process.put(:market_server, market_pid)
-    # process : %{market_id => {description, market_pid, on?}}
-    Process.put(name, {description, market_pid, :on})
+    # process : %{market_id => {market_pid, on?}}
+    Process.put(name, {market_pid, :on})
     {:ok, market_pid}
   end
 
@@ -293,9 +294,10 @@ defmodule BetUnfair do
   GenServer function associated to market_create.
   Initialize the GenServer state.
   """
-  @spec init(market :: market_place()) :: {:ok, market_place()}
-  def init(market_place) do
-    {:ok, market_place}
+  @spec init({name :: String.t(), description :: String.t()}) :: {:ok, market_place()}
+  def init({name, description}) do
+    market_info = %{name: name, description: description, statu: :active}
+    {:ok, %{market_info, %{}}}
   end
 
   @doc """
@@ -327,7 +329,7 @@ defmodule BetUnfair do
   @spec market_list_active() :: {:ok, [market_id()]}
   def market_list_active() do
     list_markets = Process.get()
-    valide_market = &(elem(&1,2) == :on)
+    valide_market = &(elem(&1,1) == :on)
     list_active_markets = filter(list_markets, valide_market)
     {:ok, list_active_markets}
   end
@@ -357,12 +359,16 @@ defmodule BetUnfair do
   @doc """
   GenServer function associated with market_cancel
   """
-  def handle_call(:market_cancel, _from, market) do
+  def handle_call(:market_cancel, _from, {market_info, bets}) do
     # We could use map but it may be executed in //
     # and if so, it could give weird results
     # (one bet cancel may overwrite another that's in //)
-    list_bets = Map.values(market)
-    List.foldl(list_bets, :nil, fn bet -> GenServer.call(:bet_cancel, bet) end)
+    list_bets = Map.keys(bets)
+    List.foldl(list_bets, :nil, fn bet_id -> bet_cancel_all(bet_id) end)
+    updated_market_info = %{ name: market_info[:name]
+                           , description: market_info[:description]
+                           , satus: :cancelled}
+    {reply, :ok, {updated_market_info, %{}}}
   end
 
   @doc """
@@ -386,6 +392,15 @@ defmodule BetUnfair do
     end
   end
 
-  ## TODO : the handle_call for market freeze ##
+  @doc """
+  GenServer function associated with market_cancel
+  """
+  def handle_call(:market_freeze, _from, {market_info, bets}) do
+    list_bets = Map.keys(bets)
+    ## TODO : delete un-matched bets from bets and cancel them
+    ## using the same fold as before
+    ## and then return the new market
+  end
+
 
 end

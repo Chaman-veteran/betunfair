@@ -4,12 +4,34 @@ defmodule BetUnfair do
   """
   use GenServer
 
+  # GenServer is used for markets :
+  # each market runs with a unique pid & server
+  # in order to increase scalability of market places
+
   @type user_id :: String.t()
   @type bet_id :: String.t()
-  @type users :: %{user_id() => {user :: String.t(), balance :: integer, [bet_id()]}}
+  @type users :: %{user_id() => %{user: String.t(), balance: integer(), bets: [bet_id()]}}
   # A market is defined by the participants to a bet
   @type market_id :: pid()
-  @type market :: %{bet_id() => users()}
+  @type market :: %{ name: String.t(),
+                    description: String.t(),
+                    status: :active |
+                    :frozen |
+                    :cancelled |
+                    {:settled, result::bool()}}
+  @type bet :: %{ bet_type: :back | :lay,
+                  market_id: market_id(),
+                  user_id: user_id(),
+                  odds: integer(),
+                  original_stake: integer(), # original stake
+                  remaining_stake: integer(), # non-matched stake
+                  matched_bets: [bet_id()], # list of matched bets
+                  status: :active |
+                          :cancelled |
+                          :market_cancelled |
+                          {:market_settled, boolean()}
+                }
+  @type market_place :: {market, %{bet_id() => bet()}}
 
   ################################
   #### EXCHANGES INTERACTIONS ####
@@ -29,22 +51,13 @@ defmodule BetUnfair do
       {:ok, %{}}
 
   """
-  @spec start_link(name :: String.t()) :: {:ok, market()}
+  @spec start_link(name :: String.t()) :: {:ok, market_place()}
   def start_link(name) do
     if Process.get(name) == :nil do
       market_create(name, :nil)
     else
       # TODO : recover the existing data
     end
-  end
-
-  @doc """
-  GenServer function associated to start_link.
-  Initialize the GenServer state.
-  """
-  @spec init(market :: market()) :: {:ok, market()}
-  def init(market) do
-    {:ok, market}
   end
 
   @doc """
@@ -80,6 +93,7 @@ defmodule BetUnfair do
   @spec clean(name :: String.t()):: :ok
   def clean(name) do
     {_description, market_id, _} = Process.get(name)
+    market_cancel(market_id)
     GenServer.stop(market_id)
     Process.delete(name)
     :ok
@@ -115,7 +129,7 @@ defmodule BetUnfair do
       # The user already exists
       {:error, id}
     else
-      updated_users = Map.put(users, id, {name, 0, []})
+      updated_users = Map.put(users, id, %{name: name, balance: 0, bets: []})
       Process.put(:users, updated_users)
       {:ok, id}
     end
@@ -141,8 +155,8 @@ defmodule BetUnfair do
     users = Process.get(:users)
     if Map.has_key?(users, id) and amount >= 0 do
       {:ok, user} = Map.fetch(users, id)
-      new_amount = elem(user,1)+amount
-      updated_users = Map.replace(users, id, {elem(user,0), new_amount, elem(user,2)})
+      new_amount = user[:balance] +amount
+      updated_users = Map.replace(users, id, %{name: user[:name], balance: new_amount, bets: user[:bets]})
       Process.put(:users, updated_users)
       :ok
     else
@@ -175,11 +189,11 @@ defmodule BetUnfair do
     users = Process.get(:users)
     if Map.has_key?(users, id) do
       {:ok, user} = Map.fetch(users, id)
-      if amount > elem(user,1) do
+      if amount > user[:balance] do
         :error
       else
-        new_amount = elem(user,1)-amount
-        updated_users = Map.replace(users, id, {elem(user,0), new_amount, elem(user,2)})
+        new_amount = user[:balance]-amount
+        updated_users = Map.replace(users, id, %{name: user[:name], balance: new_amount, bets: user[:bets]})
         Process.put(:users, updated_users)
         :ok
       end
@@ -202,13 +216,12 @@ defmodule BetUnfair do
 
   """
   @spec user_get(id :: user_id()) ::
-          {:ok, {name :: String.t(), id :: user_id(), balance :: integer()}} | {:error}
-  ## Remark : error in the stated signature ?? Shouldn't it be {:ok, {name :: String.t(), ...}} instead of {:ok, %{name: string...}}
+          {:ok, %{name: String.t(), id: user_id(), balance: integer()}} | {:error}
   def user_get(id) do
     users = Process.get(:users)
     if Map.has_key?(users,id) do
       {:ok, user} = Map.fetch(users, id)
-      {:ok, {elem(user,0), id, elem(user,1), elem(user,2)}}
+      {:ok, %{name: user[:name], id: id, balance: user[:balance]}}
     else
       {:error}
     end
@@ -231,7 +244,7 @@ defmodule BetUnfair do
     users = Process.get(:users)
     if Map.has_key?(users, id) do
       {:ok, user} = Map.fetch(users, id)
-      elem(user,2)
+      user[:bets]
     else
       []
     end
@@ -277,6 +290,15 @@ defmodule BetUnfair do
   end
 
   @doc """
+  GenServer function associated to market_create.
+  Initialize the GenServer state.
+  """
+  @spec init(market :: market_place()) :: {:ok, market_place()}
+  def init(market_place) do
+    {:ok, market_place}
+  end
+
+  @doc """
   Returns all markets.
 
   ## Examples
@@ -306,8 +328,8 @@ defmodule BetUnfair do
   def market_list_active() do
     list_markets = Process.get()
     valide_market = &(elem(&1,2) == :on)
-    list_markets_active = filter(list_markets, valide_market)
-    {:ok, list_markets_actives}
+    list_active_markets = filter(list_markets, valide_market)
+    {:ok, list_active_markets}
   end
 
   @doc """
@@ -327,8 +349,43 @@ defmodule BetUnfair do
       :ok
     else
       # Returning all stakes to users
-      ## TODO : needs to better define bets (more than their ids) ##
+      GenServer.call(market, :market_cancel)
+      receive do _reply -> :ok end
     end
   end
+
+  @doc """
+  GenServer function associated with market_cancel
+  """
+  def handle_call(:market_cancel, _from, market) do
+    # We could use map but it may be executed in //
+    # and if so, it could give weird results
+    # (one bet cancel may overwrite another that's in //)
+    list_bets = Map.values(market)
+    List.foldl(list_bets, :nil, fn bet -> GenServer.call(:bet_cancel, bet) end)
+  end
+
+  @doc """
+  Stops all betting in the market; stakes
+  in non-matched bets are returned to users.
+
+  ## Examples
+
+      iex> Betunfair.market_freeze(#PID<_>)
+      :ok
+
+  """
+  @spec market_freeze(id :: market_id()):: :ok
+  def market_freeze(id) do
+    market = Process.get(id)
+    if market == :nil do
+      :ok
+    else
+      GenServer.call(market, :market_freeze)
+      receive do _reply -> :ok end
+    end
+  end
+
+  ## TODO : the handle_call for market freeze ##
 
 end

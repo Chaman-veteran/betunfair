@@ -19,16 +19,16 @@ defmodule BetUnfairTest do
     BetUnfair.start_link("test_users")
     assert BetUnfair.user_create("Alice", "Alice99") == {:ok, "Alice"}
     assert BetUnfair.user_create("Alice", "Alice01") == {:error, "Alice"}
-    assert BetUnfair.user_get("Alice") == {:ok, {"Alice99", "Alice", 0, []}}
+    assert BetUnfair.user_get("Alice") == {:ok, %{name: "Alice99", id: "Alice", balance: 0}}
     assert BetUnfair.user_get("Bob") == {:error}
     assert BetUnfair.user_deposit("Alice", -10) == :error
     assert BetUnfair.user_deposit("Alice", 10) == :ok
     assert BetUnfair.user_create("Bob", "B0B") == {:ok, "Bob"}
-    assert BetUnfair.user_get("Bob") ==  {:ok, {"B0B", "Bob", 0, []}}
+    assert BetUnfair.user_get("Bob") ==  {:ok, %{name: "B0B", id: "Bob", balance: 0}}
     assert BetUnfair.user_withdraw("Alice", 5) == :ok
     assert BetUnfair.user_withdraw("Bob", 2) == :error
-    assert BetUnfair.user_get("Bob") == {:ok, {"B0B", "Bob", 0, []}}
-    assert BetUnfair.user_get("Alice") == {:ok, {"Alice99", "Alice", 5, []}}
+    assert BetUnfair.user_get("Bob") == {:ok, %{name: "B0B", id: "Bob", balance: 0}}
+    assert BetUnfair.user_get("Alice") == {:ok, %{name: "Alice99", id: "Alice", balance: 5}}
     assert BetUnfair.user_bets("Alice") == []
     BetUnfair.clean("test_users")
   end

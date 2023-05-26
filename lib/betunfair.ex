@@ -3,6 +3,8 @@ defmodule BetUnfair do
   Documentation for `BetUnfair`.
   """
   use GenServer
+  ## Variations in the API were made iff we added the error  ##
+  ## support for higher robustness                           ##
 
   # GenServer is used for markets :
   # each market runs with a unique pid & server
@@ -48,7 +50,7 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.start_link("Futbol")
+      iex> Betunfair.start_link("Madrid-Barca")
       {:ok, %{}}
 
   """
@@ -87,7 +89,7 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.clean("Futbol")
+      iex> Betunfair.clean("Madrid-Barca")
       :ok
 
   """
@@ -237,7 +239,7 @@ defmodule BetUnfair do
   ## Examples
 
       iex> Betunfair.user_get("Alice",15)
-      ["Madrid - Barca", "Paris - Marseille"]
+      ["Madrid wins over Barca", "Paris wins over Marseille"]
 
   """
   @spec user_bets(id :: user_id()) :: Enumerable.t(bet_id())
@@ -277,7 +279,7 @@ defmodule BetUnfair do
 
   ## Examples
 
-      iex> Betunfair.market_create("Futbol", "Market place for futbol bets")
+      iex> Betunfair.market_create("Madrid-Barca", "Market place for Madrid-Barca bets result")
       {:ok, #PID<_>}
 
   """
@@ -364,11 +366,11 @@ defmodule BetUnfair do
     # and if so, it could give weird results
     # (one bet cancel may overwrite another that's in //)
     list_bets = Map.keys(bets)
-    List.foldl(list_bets, :nil, fn bet_id -> bet_cancel_all(bet_id) end)
+    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_cancel_all(bet_id) | acc] end)
     updated_market_info = %{ name: market_info[:name]
                            , description: market_info[:description]
                            , satus: :cancelled}
-    {reply, :ok, {updated_market_info, %{}}}
+    {reply, :ok, {updated_market_info, updated_bets}}
   end
 
   @doc """
@@ -397,10 +399,227 @@ defmodule BetUnfair do
   """
   def handle_call(:market_freeze, _from, {market_info, bets}) do
     list_bets = Map.keys(bets)
-    ## TODO : delete un-matched bets from bets and cancel them
-    ## using the same fold as before
-    ## and then return the new market
+    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_cancel_all(bet_id) | acc] end)
+    updated_market_info = %{ name: market_info[:name]
+                           , description: market_info[:description]
+                           , satus: :frozen}
+    {reply, :ok, {updated_market_info, updated_bets}}
   end
 
+  @doc """
+  The market (event) has been resolved with argument result.
+  Winnings are distributed to winning users according to stakes and odds.
 
+  ## Examples
+
+      iex> Betunfair.market_settle(#PID<_>, True)
+      :ok
+
+  """
+  @spec market_settle(id :: market_id(), result :: boolean()):: :ok
+  def market_settle(id, result) do
+    market = Process.get(id)
+    if market == :nil do
+      :error
+    else
+      GenServer.call(market, :market_settle)
+      receive do _reply -> :ok end
+    end
+  end
+
+  @doc """
+  GenServer function associated with market_settle
+  """
+  def handle_call(:market_settle, _from, {market_info, bets}) do
+    list_bets = Map.keys(bets)
+    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_settle(bet_id) | acc] end)
+    updated_market_info = %{ name: market_info[:name]
+                           , description: market_info[:description]
+                           , satus: {:settled, result}}
+    {reply, :ok, {updated_market_info, updated_bets}}
+  end
+
+  @doc """
+  All bets (matched or unmatched) for the market are returned.
+
+  ## Examples
+
+      iex> Betunfair.market_bets(#PID<_>)
+      {:ok, ["Madrid - Barca"]}
+
+  """
+  @spec market_bets(id :: market_id()) :: {:ok, Enumerable.t(bet_id())}
+  def market_bets(id) do
+    market = Process.get(id)
+    if market == :nil do
+      {:ok, []}
+    else
+      GenServer.call(market, :market_bets)
+      receive do reply -> reply end
+    end
+  end
+
+  @doc """
+  GenServer function associated with market_bets
+  """
+  def handle_call(:market_bets, _from, {market_info, bets}) do
+    list_bets = Map.keys(bets)
+    {reply, {:ok, list_bets}, {market_info, bets}}
+  end
+
+  @doc """
+  All pending (non matched) backing bets for the market are returned.
+  Note that the bets are returned as a tuple {odds,bet_id},
+  and that the elements should be returned in ascending order
+  (i.e., bets with smaller odds first).
+
+  ## Examples
+
+      iex> Betunfair.market_bets(#PID<_>)
+      {:ok, ["Madrid - Barca"]}
+
+  """
+  @spec market_pending_backs(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
+  def market_pending_backs(id) do
+    market = Process.get(id)
+    if market == :nil do
+      {:ok, []}
+    else
+      GenServer.call(market, :market_pending_backs)
+      receive do reply -> reply end
+    end
+  end
+
+  @doc """
+  GenServer function associated with market_pending_backs
+  """
+  def handle_call(:market_pending_backs, _from, {market_info, bets}) do
+    # Remark : Sorting after constructing the list gives better performances
+    # if we do a bubblesort-like for sorting while constructing it we have a O(n^2)
+    # complexity while it's O(n+nlog(n)) = O(nlog(n)) for sorting after creating it.
+    list_bets = Map.keys(bets)
+    defp extract_info_bet(bet_id, acc) do
+      bet_infos = elem(bet_get(bet_id),1)
+      if bet_infos[:bet_type] == :back
+          && bet_infos[:matched_bets] != [] do
+        [{bet_infos[:odds], bet_id} | acc]
+      else
+        acc
+      end
+    end
+    get_bets = List.foldl(list_bets, [], extract_info_bet)
+    {reply, {:ok, List.keysort(get_bets,0)}, {market_info, bets}}
+  end
+
+  @doc """
+  All pending lay bets for the market are returned.
+  Note that the bets are returned as a tuple {odds,bet_id},
+  and that the elements should be returned in descending order
+  (i.e., bets with larger odds first).
+
+  ## Examples
+
+      iex> Betunfair.market_bets(#PID<_>)
+      {:ok, ["Madrid - Barca"]}
+
+  """
+  @spec market_pending_lays(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
+  def market_pending_lays(id) do
+    market = Process.get(id)
+    if market == :nil do
+      {:ok, []}
+    else
+      GenServer.call(market, :market_pending_lays)
+      receive do reply -> reply end
+    end
+  end
+
+  @doc """
+  GenServer function associated with market_pending_lays
+  """
+  def handle_call(:market_pending_lays, _from, {market_info, bets}) do
+    # Remark : Sorting after constructing the list gives better performances
+    # if we do a bubblesort-like for sorting while constructing it we have a O(n^2)
+    # complexity while it's O(n+nlog(n)) = O(nlog(n)) for sorting after creating it.
+    list_bets = Map.keys(bets)
+    defp extract_info_bet(bet_id, acc) do
+      bet_infos = elem(bet_get(bet_id),1)
+      if bet_infos[:bet_type] == :lay
+          && bet_infos[:matched_bets] != [] do
+        [{bet_infos[:odds], bet_id} | acc]
+      else
+        acc
+      end
+    end
+    get_bets = List.foldl(list_bets, [], extract_info_bet)
+    {reply, {:ok, List.keysort(get_bets,0)}, {market_info, bets}}
+  end
+
+  @doc """
+  Returns an enumerable containing all market's info.
+
+  ## Parameters
+    - id, the string that identifies the market
+
+  ## Examples
+
+      iex> Betunfair.market_get("Madrid wins over Barca")
+      {:ok,
+            %{ name: "Madrid wins over Barca"
+             , description: "Friendly match the 26/05,
+                              bet predicting that Madrid wins over Barca"
+             , status: :active
+             }
+      }
+
+  """
+  @spec market_get(id :: user_id()) ::
+  {:ok | :error, %{name: string(), description: string(),
+                    status: :active | :frozen | :cancelled | {:settled, result::bool()}}}
+  def market_get(id) do
+    market = Process.get(id)
+    if market == :nil do
+      {:error, %{}}
+    else
+      GenServer.call(market, :market_get)
+      receive do reply -> reply end
+    end
+  end
+
+  @doc """
+  GenServer function associated with market_get
+  """
+  def handle_call(:market_get, _from, {market_info, bets}) do
+    {:ok, market_info}
+  end
+
+  @doc """
+  Try to match backing and lay bets in the specified market.
+
+  ## Parameters
+    - id, the string that identifies the market
+
+  ## Examples
+
+      iex> Betunfair.market_match("Madrid wins over Barca")
+      :ok
+
+  """
+  @spec market_match(id :: market_id()):: :ok
+  def market_match(id) do
+    market = Process.get(id)
+    if market == :nil do
+      :ok
+    else
+      GenServer.call(market, :market_match)
+      receive do _reply -> :ok end
+    end
+  end
+
+  @doc """
+  GenServer function associated with market_match
+  """
+  def handle_call(:market_match, _from, {market_info, bets}) do
+    ## TODO : match the bets in this market if possible ##
+  end
 end

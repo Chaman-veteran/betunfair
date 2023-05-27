@@ -299,7 +299,7 @@ defmodule BetUnfair do
   @spec init({name :: String.t(), description :: String.t()}) :: {:ok, market_place()}
   def init({name, description}) do
     market_info = %{name: name, description: description, statu: :active}
-    {:ok, %{market_info, %{}}}
+    {:ok, {market_info, %{}}}
   end
 
   @doc """
@@ -358,19 +358,16 @@ defmodule BetUnfair do
     end
   end
 
-  @doc """
-  GenServer function associated with market_cancel
-  """
   def handle_call(:market_cancel, _from, {market_info, bets}) do
     # We could use map but it may be executed in //
     # and if so, it could give weird results
     # (one bet cancel may overwrite another that's in //)
     list_bets = Map.keys(bets)
     updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_cancel_all(bet_id) | acc] end)
-    updated_market_info = %{ name: market_info[:name]
-                           , description: market_info[:description]
-                           , satus: :cancelled}
-    {reply, :ok, {updated_market_info, updated_bets}}
+    updated_market_info = %{ name: market_info[:name],
+                             description: market_info[:description],
+                             satus: :cancelled}
+    {:reply, :ok, {updated_market_info, updated_bets}}
   end
 
   @doc """
@@ -394,16 +391,13 @@ defmodule BetUnfair do
     end
   end
 
-  @doc """
-  GenServer function associated with market_cancel
-  """
   def handle_call(:market_freeze, _from, {market_info, bets}) do
     list_bets = Map.keys(bets)
-    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_cancel_all(bet_id) | acc] end)
-    updated_market_info = %{ name: market_info[:name]
-                           , description: market_info[:description]
-                           , satus: :frozen}
-    {reply, :ok, {updated_market_info, updated_bets}}
+    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_cancel(bet_id) | acc] end)
+    updated_market_info = %{ name: market_info[:name],
+                             description: market_info[:description],
+                             satus: :frozen}
+    {:reply, :ok, {updated_market_info, updated_bets}}
   end
 
   @doc """
@@ -422,21 +416,19 @@ defmodule BetUnfair do
     if market == :nil do
       :error
     else
-      GenServer.call(market, :market_settle)
+      GenServer.call(market, {:market_settle, result})
       receive do _reply -> :ok end
     end
   end
 
-  @doc """
-  GenServer function associated with market_settle
-  """
-  def handle_call(:market_settle, _from, {market_info, bets}) do
+
+  def handle_call({:market_settle, result}, _from, {market_info, bets}) do
     list_bets = Map.keys(bets)
-    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_settle(bet_id) | acc] end)
-    updated_market_info = %{ name: market_info[:name]
-                           , description: market_info[:description]
-                           , satus: {:settled, result}}
-    {reply, :ok, {updated_market_info, updated_bets}}
+    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_settle(bet_id,result) | acc] end)
+    updated_market_info = %{ name: market_info[:name],
+                             description: market_info[:description],
+                             satus: {:settled, result}}
+    {:reply, :ok, {updated_market_info, updated_bets}}
   end
 
   @doc """
@@ -459,12 +451,10 @@ defmodule BetUnfair do
     end
   end
 
-  @doc """
-  GenServer function associated with market_bets
-  """
+
   def handle_call(:market_bets, _from, {market_info, bets}) do
     list_bets = Map.keys(bets)
-    {reply, {:ok, list_bets}, {market_info, bets}}
+    {:reply, {:ok, list_bets}, {market_info, bets}}
   end
 
   @doc """
@@ -490,25 +480,23 @@ defmodule BetUnfair do
     end
   end
 
-  @doc """
-  GenServer function associated with market_pending_backs
-  """
   def handle_call(:market_pending_backs, _from, {market_info, bets}) do
     # Remark : Sorting after constructing the list gives better performances
     # if we do a bubblesort-like for sorting while constructing it we have a O(n^2)
     # complexity while it's O(n+nlog(n)) = O(nlog(n)) for sorting after creating it.
     list_bets = Map.keys(bets)
-    defp extract_info_bet(bet_id, acc) do
-      bet_infos = elem(bet_get(bet_id),1)
-      if bet_infos[:bet_type] == :back
-          && bet_infos[:matched_bets] != [] do
-        [{bet_infos[:odds], bet_id} | acc]
-      else
-        acc
-      end
+    get_bets = List.foldl(list_bets, [], BetUnfair.extract_info_back/2)
+    {:reply, {:ok, List.keysort(get_bets,0)}, {market_info, bets}}
+  end
+
+  def extract_info_back(bet_id, acc) do
+    bet_infos = elem(bet_get(bet_id),1)
+    if bet_infos[:bet_type] == :back
+        && bet_infos[:matched_bets] != [] do
+      [{bet_infos[:odds], bet_id} | acc]
+    else
+      acc
     end
-    get_bets = List.foldl(list_bets, [], extract_info_bet)
-    {reply, {:ok, List.keysort(get_bets,0)}, {market_info, bets}}
   end
 
   @doc """
@@ -534,25 +522,23 @@ defmodule BetUnfair do
     end
   end
 
-  @doc """
-  GenServer function associated with market_pending_lays
-  """
   def handle_call(:market_pending_lays, _from, {market_info, bets}) do
     # Remark : Sorting after constructing the list gives better performances
     # if we do a bubblesort-like for sorting while constructing it we have a O(n^2)
     # complexity while it's O(n+nlog(n)) = O(nlog(n)) for sorting after creating it.
     list_bets = Map.keys(bets)
-    defp extract_info_bet(bet_id, acc) do
-      bet_infos = elem(bet_get(bet_id),1)
-      if bet_infos[:bet_type] == :lay
-          && bet_infos[:matched_bets] != [] do
-        [{bet_infos[:odds], bet_id} | acc]
-      else
-        acc
-      end
+    get_bets = List.foldl(list_bets, [], BetUnfair.extract_info_lay/2)
+    {:reply, {:ok, List.keysort(get_bets,0)}, {market_info, bets}}
+  end
+
+  def extract_info_lay(bet_id, acc) do
+    bet_infos = elem(bet_get(bet_id),1)
+    if bet_infos[:bet_type] == :lay
+        && bet_infos[:matched_bets] != [] do
+      [{bet_infos[:odds], bet_id} | acc]
+    else
+      acc
     end
-    get_bets = List.foldl(list_bets, [], extract_info_bet)
-    {reply, {:ok, List.keysort(get_bets,0)}, {market_info, bets}}
   end
 
   @doc """
@@ -586,10 +572,7 @@ defmodule BetUnfair do
     end
   end
 
-  @doc """
-  GenServer function associated with market_get
-  """
-  def handle_call(:market_get, _from, {market_info, bets}) do
+  def handle_call(:market_get, _from, {market_info, _bets}) do
     {:ok, market_info}
   end
 
@@ -616,9 +599,6 @@ defmodule BetUnfair do
     end
   end
 
-  @doc """
-  GenServer function associated with market_match
-  """
   def handle_call(:market_match, _from, {market_info, bets}) do
     ## TODO : match the bets in this market if possible ##
   end

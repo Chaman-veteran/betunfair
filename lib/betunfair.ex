@@ -358,18 +358,6 @@ defmodule BetUnfair do
     end
   end
 
-  def handle_call(:market_cancel, _from, {market_info, bets}) do
-    # We could use map but it may be executed in //
-    # and if so, it could give weird results
-    # (one bet cancel may overwrite another that's in //)
-    list_bets = Map.keys(bets)
-    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_cancel_all(bet_id) | acc] end)
-    updated_market_info = %{ name: market_info[:name],
-                             description: market_info[:description],
-                             satus: :cancelled}
-    {:reply, :ok, {updated_market_info, updated_bets}}
-  end
-
   @doc """
   Stops all betting in the market; stakes
   in non-matched bets are returned to users.
@@ -389,15 +377,6 @@ defmodule BetUnfair do
       GenServer.call(market, :market_freeze)
       receive do _reply -> :ok end
     end
-  end
-
-  def handle_call(:market_freeze, _from, {market_info, bets}) do
-    list_bets = Map.keys(bets)
-    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_cancel(bet_id) | acc] end)
-    updated_market_info = %{ name: market_info[:name],
-                             description: market_info[:description],
-                             satus: :frozen}
-    {:reply, :ok, {updated_market_info, updated_bets}}
   end
 
   @doc """
@@ -421,16 +400,6 @@ defmodule BetUnfair do
     end
   end
 
-
-  def handle_call({:market_settle, result}, _from, {market_info, bets}) do
-    list_bets = Map.keys(bets)
-    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_settle(bet_id,result) | acc] end)
-    updated_market_info = %{ name: market_info[:name],
-                             description: market_info[:description],
-                             satus: {:settled, result}}
-    {:reply, :ok, {updated_market_info, updated_bets}}
-  end
-
   @doc """
   All bets (matched or unmatched) for the market are returned.
 
@@ -449,12 +418,6 @@ defmodule BetUnfair do
       GenServer.call(market, :market_bets)
       receive do reply -> reply end
     end
-  end
-
-
-  def handle_call(:market_bets, _from, {market_info, bets}) do
-    list_bets = Map.keys(bets)
-    {:reply, {:ok, list_bets}, {market_info, bets}}
   end
 
   @doc """
@@ -478,15 +441,6 @@ defmodule BetUnfair do
       GenServer.call(market, :market_pending_backs)
       receive do reply -> reply end
     end
-  end
-
-  def handle_call(:market_pending_backs, _from, {market_info, bets}) do
-    # Remark : Sorting after constructing the list gives better performances
-    # if we do a bubblesort-like for sorting while constructing it we have a O(n^2)
-    # complexity while it's O(n+nlog(n)) = O(nlog(n)) for sorting after creating it.
-    list_bets = Map.keys(bets)
-    get_bets = List.foldl(list_bets, [], BetUnfair.extract_info_back/2)
-    {:reply, {:ok, List.keysort(get_bets,0)}, {market_info, bets}}
   end
 
   def extract_info_back(bet_id, acc) do
@@ -520,15 +474,6 @@ defmodule BetUnfair do
       GenServer.call(market, :market_pending_lays)
       receive do reply -> reply end
     end
-  end
-
-  def handle_call(:market_pending_lays, _from, {market_info, bets}) do
-    # Remark : Sorting after constructing the list gives better performances
-    # if we do a bubblesort-like for sorting while constructing it we have a O(n^2)
-    # complexity while it's O(n+nlog(n)) = O(nlog(n)) for sorting after creating it.
-    list_bets = Map.keys(bets)
-    get_bets = List.foldl(list_bets, [], BetUnfair.extract_info_lay/2)
-    {:reply, {:ok, List.keysort(get_bets,0)}, {market_info, bets}}
   end
 
   def extract_info_lay(bet_id, acc) do
@@ -572,10 +517,6 @@ defmodule BetUnfair do
     end
   end
 
-  def handle_call(:market_get, _from, {market_info, _bets}) do
-    {:ok, market_info}
-  end
-
   @doc """
   Try to match backing and lay bets in the specified market.
 
@@ -597,6 +538,63 @@ defmodule BetUnfair do
       GenServer.call(market, :market_match)
       receive do _reply -> :ok end
     end
+  end
+
+  def handle_call({:market_settle, result}, _from, {market_info, bets}) do
+    list_bets = Map.keys(bets)
+    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_settle(bet_id,result) | acc] end)
+    updated_market_info = %{ name: market_info[:name],
+                             description: market_info[:description],
+                             satus: {:settled, result}}
+    {:reply, :ok, {updated_market_info, updated_bets}}
+  end
+
+  def handle_call(:market_freeze, _from, {market_info, bets}) do
+    list_bets = Map.keys(bets)
+    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_cancel(bet_id) | acc] end)
+    updated_market_info = %{ name: market_info[:name],
+                             description: market_info[:description],
+                             satus: :frozen}
+    {:reply, :ok, {updated_market_info, updated_bets}}
+  end
+
+  def handle_call(:market_cancel, _from, {market_info, bets}) do
+    # We could use map but it may be executed in //
+    # and if so, it could give weird results
+    # (one bet cancel may overwrite another that's in //)
+    list_bets = Map.keys(bets)
+    updated_bets = List.foldl(list_bets, [], fn bet_id, acc -> [bet_cancel_all(bet_id) | acc] end)
+    updated_market_info = %{ name: market_info[:name],
+                             description: market_info[:description],
+                             satus: :cancelled}
+    {:reply, :ok, {updated_market_info, updated_bets}}
+  end
+
+  def handle_call(:market_bets, _from, {market_info, bets}) do
+    list_bets = Map.keys(bets)
+    {:reply, {:ok, list_bets}, {market_info, bets}}
+  end
+
+  def handle_call(:market_pending_backs, _from, {market_info, bets}) do
+    # Remark : Sorting after constructing the list gives better performances
+    # if we do a bubblesort-like for sorting while constructing it we have a O(n^2)
+    # complexity while it's O(n+nlog(n)) = O(nlog(n)) for sorting after creating it.
+    list_bets = Map.keys(bets)
+    get_bets = List.foldl(list_bets, [], BetUnfair.extract_info_back/2)
+    {:reply, {:ok, List.keysort(get_bets,0)}, {market_info, bets}}
+  end
+
+  def handle_call(:market_pending_lays, _from, {market_info, bets}) do
+    # Remark : Sorting after constructing the list gives better performances
+    # if we do a bubblesort-like for sorting while constructing it we have a O(n^2)
+    # complexity while it's O(n+nlog(n)) = O(nlog(n)) for sorting after creating it.
+    list_bets = Map.keys(bets)
+    get_bets = List.foldl(list_bets, [], BetUnfair.extract_info_lay/2)
+    {:reply, {:ok, List.keysort(get_bets,0)}, {market_info, bets}}
+  end
+
+  def handle_call(:market_get, _from, {market_info, _bets}) do
+    {:ok, market_info}
   end
 
   def handle_call(:market_match, _from, {market_info, bets}) do

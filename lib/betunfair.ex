@@ -519,49 +519,12 @@ defmodule BetUnfair do
     end
   end
 
-  # ------------------------- BETS -------------------------
-
-  # creates a backing bet by the specified user and for the market specified.
-  @type bet_back(
-          user_id :: user_id(),
-          market_id :: market_id(),
-          stake :: integer(),
-          odds :: integer()
-        ) :: {:ok, bet_id()}
-
-  # creates a lay bet by the specified user and for the market specified.
-  @type bet_lay(
-          user_id :: user_id(),
-          market_id :: market_id(),
-          stake :: integer(),
-          odds :: integer()
-        ) :: {:ok, bet_id()}
-
-  # cancels the parts of a bet that has not been matched yet.
-  @type bet_cancel(id :: bet_id()) :: :ok
-
-  @type bet_get(id :: bet_id()) ::
-          {:ok,
-           %{
-             bet_type: :back | :lay,
-             market_id: market_id(),
-             user_id: user_id(),
-             odds: integer(),
-             # original stake
-             original_stake: integer(),
-             # non-matched stake
-             remaining_stake: integer(),
-             # list of matched bets
-             matched_bets: [bet_id()],
-             status:
-               :active
-               | :cancelled
-               | :market_cancelled
-               | {:market_settled, boolean()}
-           }}
+  ##########################
+  #### BETS INTERACTION ####
+  ##########################
 
   @spec bet_back(user_id :: user_id(), market_id :: market_id(),
-  stake :: integer(), odds :: integer()) :: {:ok, bet_id()}
+                 stake :: integer(), odds :: integer()) :: {:ok, bet_id()}
   # creates a backing bet by the specified user and for the market specified.
   def bet_back(user_id, market_id, stake, odds) do
     bet_id= user_id <> market_id
@@ -570,14 +533,13 @@ defmodule BetUnfair do
       {:error, bet_id}
     else
       updated_bet = Map.put(bet, %{:back, market_id, user_id, odds, stake,
-      _remaining_stake, [], _status})
+                                   _remaining_stake, [], _status})
       Process.put(:bet, updated_bet)
       {:ok,bet_id}
-
   end
 
   @spec bet_lay(user_id :: user_id(),market_id :: market_id(),
-  stake :: integer(),odds :: integer()) :: {:ok, bet_id()}
+                stake :: integer(),odds :: integer()) :: {:ok, bet_id()}
   # creates a lay bet by the specified user and for the market specified.
   def bet_lay(user_id, market_id, stake, odds) do
     bet_id= user_id <> market_id
@@ -586,7 +548,7 @@ defmodule BetUnfair do
       {:error, bet_id}
     else
       updated_bet = Map.put(bet, %{:lay, market_id, user_id, odds, stake,
-      _remaining_stake, [_bet_id], _status})
+                                   _remaining_stake, [_bet_id], _status})
       Process.put(:bet, updated_bet)
       {:ok,bet_id}
 
@@ -600,32 +562,28 @@ defmodule BetUnfair do
         :ok
       _ ->
         bet = Process.get(:bet)
-        if Map.has_key?(bet,id) && Enum.member?(market_pednding_backs(Map.get(bet,:market_id)),id)do
+        if Map.has_key?(bet,id) &&
+            Enum.member?(market_pending_backs(Map.get(bet,market_id)),id)do
           Map.put(bet, :status, :cancelled)
-            receive do reply -> reply end
+          receive do reply -> reply end
         else
           :error
 
   end
 
-  @spec bet_get(id :: bet_id()) ::{:ok,
-           %{bet_type: :back | :lay, market_id: market_id(), user_id: user_id(),
-             odds: integer(), # original stake
-             original_stake: integer(), # non-matched stake
-             remaining_stake: integer(), # list of matched bets
-             matched_bets: [bet_id()],status:
-               :active | :cancelled | :market_cancelled | {:market_settled, boolean()}}}
+  @spec bet_get(id :: bet_id()) :: {:ok, bet()}
   def bet_get(id) do
     bet = Process.get(:bet)
     if Map.has_key?(bet, id) do
       {:ok,bet_to_get}= Map.fetch(bet,id)
-      {:ok,&{bet_type: bet_to_get[:bet_type],bet_to_get[:odds],
-      bet_to_get[:original_stake], bet_to_get[:remaining_stake],
-      bet_to_get[:matched_bets[id]], bet_to_get[:status]}}
-
+      {:ok, &{bet_type: bet_to_get[:bet_type],bet_to_get[:odds],
+              bet_to_get[:original_stake], bet_to_get[:remaining_stake],
+              bet_to_get[:matched_bets[id]], bet_to_get[:status]}}
   end
 
-# ------------------------- HANDLE CALLS -------------------------
+  ######################
+  #### HANDLE CALLS ####
+  ######################
 
   def handle_call({:market_settle, result}, _from, %{market: market_info, backs: backs, lays: lays}) do
     list_bets = backs ++ lays

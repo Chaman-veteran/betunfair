@@ -605,9 +605,10 @@ defmodule BetUnfair do
     {:reply, {:ok, market_info}, %{market: market_info, backs: backs, lays: lays}}
   end
 
+  # Pre-condition : backs and lays are sorted by the odds and the time they were placed
   def handle_call(:market_match, _from, %{market: market_info, backs: backs, lays: lays}) do
-    ## TODO : match the bets in this market if possible ##
-    # Pre-condition : backs and lays are sorted by the odds and the time they were placed
+	matching_algorithm(backs, lays)
+    {:reply, :ok, %{market: market_info, backs: backs, lays: lays}}
   end
 
   def handle_call({:new_bet, bet_id, market_id, user_id, bet_type, odds, stake},
@@ -619,7 +620,7 @@ defmodule BetUnfair do
       bet_infos = %{ bet_type: bet_type,
                      market_id: market_id,
                      user_id: user_id,
-                     odds: integer,
+                     odds: odds,
                      original_stake: stake, # original stake
                      remaining_stake: stake, # non-matched stake
                      matched_bets: [], # list of matched bets
@@ -630,21 +631,24 @@ defmodule BetUnfair do
 	  # We insert the bet in the market's state
       if bet_type == :back do
 		updated_lays = lays
-		backs = insert_by(bet_id, backs, fn id -> Process.get(id)[:odds] end)
+		updated_backs = insert_by(bet_id, backs, fn id -> Process.get(id)[:odds] end, :asc)
+		{:reply, {:ok, bet_id}, %{market: market_info, backs: updated_backs, lays: updated_lays}}
       else
 		updated_backs = backs
-		lays = insert_by(bet_id, lays, fn id -> Process.get(id)[:odds] end)
+		updated_lays = insert_by(bet_id, lays, fn id -> Process.get(id)[:odds] end, :desc)
+		{:reply, {:ok, bet_id}, %{market: market_info, backs: updated_backs, lays: updated_lays}}
       end
-      {:reply, {:ok, bet_id}, %{market: market_info, backs: updated_backs, lays: updated_lays}}
     else
       {:reply, {:error, bet_id}, %{market: market_info, backs: backs, lays: lays}}
+	end
   end
 
   def handle_call({:bet_cancel, bet_id}, _from, _market_infos) do
-    case Process.get(id) do
+    case Process.get(bet_id) do
       :nil ->
         :ok # if there is no bet to cancel, ok
       bet ->
+        # if there is a bet, we cancel it and return the stake to the user.
         updated_bet = %{ bet_type: bet[:bet_type],
                          market_id: bet[:market_id],
                          user_id: bet[:user_id],
@@ -655,15 +659,16 @@ defmodule BetUnfair do
                          status: :cancelled
                       }
         Process.put(bet_id, updated_bet)
-        receive do reply -> bet[:remaining_stake] end
-        # if there is a bet, we cancel it and return the stake to the user.
+		bet[:remaining_stake]
+	end
   end
 
   def handle_call({:bet_cancel_whole, bet_id}, _from, _market_infos) do
-    case Process.get(id) do
+    case Process.get(bet_id) do
       :nil ->
         :ok # if there is no bet to cancel, ok
       bet ->
+        # if there is a bet, we cancel it and return the stake to the user.
         updated_bet = %{ bet_type: bet[:bet_type],
                          market_id: bet[:market_id],
                          user_id: bet[:user_id],
@@ -674,8 +679,8 @@ defmodule BetUnfair do
                          status: :cancelled
                       }
         Process.put(bet_id, updated_bet)
-        receive do reply -> bet[:original_stake] end
-        # if there is a bet, we cancel it and return the stake to the user.
+        bet[:original_stake]
+	end
   end
 
   def handle_call({:bet_get, bet_id}, _from, _market_infos) do
@@ -696,6 +701,74 @@ defmodule BetUnfair do
     end
   end
 
+  def matching_algorithm(backs, lays) do
+	case {backs, lays} do
+		{[], _} -> :ok
+		{_, []} -> :ok
+		{[hbacks | tbacks], [hlays | tlays]} ->
+			get_back = bet_get(hbacks)
+			get_lay = bet_get(hlays)
+			if get_back[:status] != :active do
+				matching_algorithm(tbacks, lays)
+			else
+				matching_algorithm(backs, tlays)
+			end
+			if get_back[:odds] <= get_lay[:odds] do
+				# There's a match !
+				allowed_to_loose = get_back[:stake]*get_back[:odds]-get_back[:remaining_stake]
+				if allowed_to_loose >= get_lay[:remaining_stake] do
+					# We consume all of the lay stake
+					updated_lay = %{ bet_type: get_lay[:bet_type],
+								 	 market_id: get_lay[:market_id],
+								 	 user_id: get_lay[:user_id],
+								 	 odds: get_lay[:odds],
+								 	 original_stake: get_lay[:original_stake], # original stake
+								 	 remaining_stake: 0, # non-matched stake
+								 	 matched_bets: [ hbacks | get_lay[:matched_bets]], # list of matched bets
+								 	 status: :active
+								 	}
+					updated_back = %{ bet_type: get_back[:bet_type],
+									 market_id: get_back[:market_id],
+									 user_id: get_back[:user_id],
+									 odds: get_back[:odds],
+									 original_stake: get_back[:original_stake], # original stake
+									 remaining_stake: get_back[:remaining_stake]-allowed_to_loose, # non-matched stake
+									 matched_bets: [ hlays | get_back[:matched_bets]], # list of matched bets
+									 status: :active
+									}
+					Process.put(hlays, updated_lay)
+					Process.put(hbacks, updated_back)
+					matching_algorithm(backs, tlays)
+				else
+					# We consume all of the backing stake
+					updated_lay = %{ bet_type: get_lay[:bet_type],
+									 market_id: get_lay[:market_id],
+									 user_id: get_lay[:user_id],
+									 odds: get_lay[:odds],
+									 original_stake: get_lay[:original_stake], # original stake
+									 remaining_stake: get_lay[:remaining_stake]-allowed_to_loose, # non-matched stake
+									 matched_bets: [ hbacks | get_lay[:matched_bets]], # list of matched bets
+									 status: :active
+									}
+					updated_back = %{ bet_type: get_back[:bet_type],
+									market_id: get_back[:market_id],
+									user_id: get_back[:user_id],
+									odds: get_back[:odds],
+									original_stake: get_back[:original_stake], # original stake
+									remaining_stake: 0, # non-matched stake
+									matched_bets: [ hlays | get_back[:matched_bets]], # list of matched bets
+									status: :active
+									}
+					Process.put(hlays, updated_lay)
+					Process.put(hbacks, updated_back)
+					matching_algorithm(tbacks, lays)
+				end
+			else
+				:ok
+			end
+	end
+  end
+
   ########################
   #### MISC FUNCTIONS ####
   ########################
@@ -711,12 +784,19 @@ defmodule BetUnfair do
     end
   end
 
-  def insert_by(elem, [], _) do
+  def insert_by(elem, [], _, _) do
 	[elem]
   end
-  def insert_by(elem, [head | tail], function) do
-	if function.(head) < function.(elem) do
-		[head | insert_by(elem, tail, functio)]
+  def insert_by(elem, [head | tail], function, :asc) do
+	if function.(head) <= function.(elem) do
+		[head | insert_by(elem, tail, function, :asc)]
+	else
+		[elem | [head | tail]]
+	end
+  end
+  def insert_by(elem, [head | tail], function, :desc) do
+	if function.(head) > function.(elem) do
+		[head | insert_by(elem, tail, function, :desc)]
 	else
 		[elem | [head | tail]]
 	end

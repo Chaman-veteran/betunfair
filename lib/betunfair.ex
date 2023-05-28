@@ -549,6 +549,21 @@ defmodule BetUnfair do
     receive do reply -> reply end
   end
 
+  @spec bet_settle(id :: bet_id(), result :: boolean()) :ok
+  def bet_settle(id, result) do
+    case bet_get(id) do
+      :nil->
+        :error
+      _->
+        if(result)
+          Genserver.call(id[:market],{:bet_settle, id, result})
+          receive do reply -> user_deposit(id[:user], reply) end
+        else
+          Genserver.call(id[:market],{:bet_settle, id, result})
+          receive do reply -> reply end
+
+  end
+
   ######################
   #### HANDLE CALLS ####
   ######################
@@ -558,7 +573,7 @@ defmodule BetUnfair do
     List.foldl(list_bets, :nil, fn bet_id, _acc -> bet_settle(bet_id,result) end)
     updated_market_info = %{ name: market_info[:name],
                              description: market_info[:description],
-                             satus: {:settled, result}}
+                             status: {:settled, result}}
     {:reply, :ok, %{market: updated_market_info, backs: backs, lays: lays}}
   end
 
@@ -567,7 +582,7 @@ defmodule BetUnfair do
     List.foldl(list_bets, :nil, fn bet_id, _acc -> bet_cancel(bet_id) end)
     updated_market_info = %{ name: market_info[:name],
                              description: market_info[:description],
-                             satus: :frozen}
+                             status: :frozen}
     {:reply, :ok, %{market: updated_market_info, backs: backs, lays: lays}}
   end
 
@@ -579,7 +594,7 @@ defmodule BetUnfair do
     List.foldl(list_bets, [], fn bet_id, _acc -> bet_cancel_whole(bet_id) end)
     updated_market_info = %{ name: market_info[:name],
                              description: market_info[:description],
-                             satus: :cancelled}
+                             status: :cancelled}
     {:reply, :ok, %{market: updated_market_info, backs: backs, lays: lays}}
   end
 
@@ -684,6 +699,15 @@ defmodule BetUnfair do
   end
 
   def handle_call({:bet_get, bet_id}, _from, _market_infos) do
+    bet = Process.get(bet_id)
+    if bet == :nil do
+        {:error, :nil}
+    else
+      {:ok, bet}
+    end
+  end
+
+  def handle_call({:bet_settle, bet_id, result}, _from, _market_infos) do
     bet = Process.get(bet_id)
     if bet == :nil do
         {:error, :nil}

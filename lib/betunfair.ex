@@ -13,10 +13,10 @@ defmodule BetUnfair do
   # are "stored" using the main module along with the Process module
 
   @type user_id :: String.t()
+  @type market_id :: pid()
   @type bet_id :: %{user: user_id(), market: market_id()}
   @type users :: %{user_id() => %{user: String.t(), balance: integer(), bets: [bet_id()]}}
   # A market is defined by the participants to a bet
-  @type market_id :: pid()
   @type market :: %{ name: String.t(),
                      description: String.t(),
                      status: :active |
@@ -483,9 +483,7 @@ defmodule BetUnfair do
       }
 
   """
-  @spec market_get(id :: user_id()) ::
-  {:ok | :error, %{name: string(), description: string(),
-                    status: :active | :frozen | :cancelled | {:settled, result::bool()}}}
+  @spec market_get(id :: user_id()) :: {:ok | :error, market()}
   def market_get(id) do
     market = Process.get(id)
     if market == :nil do
@@ -522,92 +520,44 @@ defmodule BetUnfair do
   ##########################
   #### BETS INTERACTION ####
   ##########################
- # ------------------------- BETS -------------------------
 
   @spec bet_back(user_id :: user_id(), market_id :: market_id(),
-  stake :: integer(), odds :: integer()) :: {:ok, bet_id()}
+                 stake :: integer(), odds :: integer()) :: {:ok | :error, bet_id()}
   # creates a backing bet by the specified user and for the market specified.
   def bet_back(user_id, market_id, stake, odds) do
     bet_id = {user_id, market_id} # store the bet_id as tuple
-    bet = Process.get(:bet, %{})
-    if Map.has_key?(bet,bet_id) do
-      {:error, bet_id} # if bet exists, error is returned
-    else
-      updated_bet = Map.put(bet, %{:back, market_id, user_id, odds, stake,
-      _remaining_stake, [], _status})
-      Process.put(:bet, updated_bet)
-      {:ok,bet_id} # else, the bet is created
-
+    GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
+    receive do reply -> reply end
   end
 
   @spec bet_lay(user_id :: user_id(),market_id :: market_id(),
-  stake :: integer(),odds :: integer()) :: {:ok, bet_id()}
+                stake :: integer(),odds :: integer()) :: {:ok | :error, bet_id()}
   # creates a lay bet by the specified user and for the market specified.
   def bet_lay(user_id, market_id, stake, odds) do
     bet_id = {user_id, market_id} # store the bet_id as tuple
-    bet = Process.get(:bet, %{})
-    if Map.has_key?(bet,bet_id) do
-      {:error, bet_id} # if bet exists, error is returned
-    else
-      updated_bet = Map.put(bet, %{:lay, market_id, user_id, odds, stake,
-      _remaining_stake, [_bet_id], _status})
-      Process.put(:bet, updated_bet)
-      {:ok,bet_id} # else, the bet is created
-
+    GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
+    receive do reply -> reply end
   end
 
   @spec bet_cancel(id :: bet_id()) :: :ok
   # cancels the parts of a bet that has not been matched yet.
   def bet_cancel(id) do
-    case Process.get(id) do
-      :nil ->
-        :ok # if there is no bet to cancel, ok
-      _ ->
-        bet = Process.get(:bet)
-        if Map.has_key?(bet,id) && Enum.member?(market_pednding_backs(Map.get(bet,elem(id,1))),id)do
-          Map.put(bet, :status, :cancelled)
-          user_deposit(elem(id,0),Map.get(bet,:original_stake))
-            receive do reply -> reply end
-            # if there is a bet, we cancel it and return the stake to the user.
-        else
-          :error # else, error
-
+    GenServer.call(id[:market], {:bet_cancel, id})
+    receive do reply -> user_deposit(id[:user], reply) end
+    :ok
   end
 
   @spec bet_cancel_whole(id :: bet_id()) :: :ok
   # cancels the parts of a bet that has not been matched yet.
   def bet_cancel_whole(id) do
-    case Process.get(id) do
-      :nil ->
-        :ok # if there is no bet to cancel, ok
-      _ ->
-        bet = Process.get(:bet)
-        if Map.has_key?(bet,id) && Enum.member?(market_bets(Map.get(bet,elem(id,1))),id)do
-          Map.put(bet, :status, :cancelled)
-          user_deposit(elem(id,0),Map.get(bet,:original_stake))
-            receive do reply -> reply end
-            # if there is a bet, we cancel it and return the stake to the user.
-        else
-          :error # else, error
-
+    GenServer.call(id[:market], {:bet_cancel_whole, id})
+    receive do reply -> reply end
   end
 
-  @spec bet_get(id :: bet_id()) ::{:ok,
-           %{bet_type: :back | :lay, market_id: market_id(), user_id: user_id(),
-             odds: integer(),
-             original_stake: integer(),  # original stake
-             remaining_stake: integer(), # non-matched stake
-             matched_bets: [bet_id()], # list of matched bets
-             status:
-               :active | :cancelled | :market_cancelled | {:market_settled, boolean()}}}
+  @spec bet_get(id :: bet_id()) ::{:ok, bet()}
   def bet_get(id) do
-    bet = Process.get(:bet)
-    if Map.has_key?(bet, id) do
-      {:ok,bet_to_get}= Map.fetch(bet,id)
-      {:ok,&{bet_type: bet_to_get[:bet_type],bet_to_get[:odds],
-      bet_to_get[:original_stake], bet_to_get[:remaining_stake],
-      bet_to_get[:matched_bets[id]], bet_to_get[:status]}}
-
+    GenServer.call(id[:market], {:bet_get,id})
+    receive do reply -> reply end
   end
 
   ######################
@@ -637,7 +587,7 @@ defmodule BetUnfair do
     # and if so, it could give weird results
     # (one bet cancel may overwrite another that's in //)
     list_bets = backs ++ lays
-    List.foldl(list_bets, [], fn bet_id, _acc -> bet_cancel_all(bet_id) end)
+    List.foldl(list_bets, [], fn bet_id, _acc -> bet_cancel_whole(bet_id) end)
     updated_market_info = %{ name: market_info[:name],
                              description: market_info[:description],
                              satus: :cancelled}
@@ -666,8 +616,75 @@ defmodule BetUnfair do
     {:reply, {:ok, market_info}, %{market: market_info, backs: backs, lays: lays}}
   end
 
-  def handle_call(:market_match, _from, {market_info, bets}) do
+  def handle_call(:market_match, _from, %{market: market_info, backs: backs, lays: lays}) do
     ## TODO : match the bets in this market if possible ##
+  end
+
+  def handle_call({:new_bet, bet_id, market_id, user_id, bet_type, odds, stake},
+                  _from, _market_infos) do
+    bet = Process.get(bet_id)
+    if bet == :nil do
+      {:error, bet_id} # if bet exists, error is returned
+    else
+      bet_infos = %{ bet_type: bet_type,
+                     market_id: market_id,
+                     user_id: user_id,
+                     odds: integer,
+                     original_stake: stake, # original stake
+                     remaining_stake: stake, # non-matched stake
+                     matched_bets: [], # list of matched bets
+                     status: :active
+                   }
+      updated_bet = Process.put(bet_id, bet_infos)
+      Process.put(bet_id, updated_bet)
+      {:ok,bet_id} # else, the bet is created
+  end
+
+  def handle_call({:bet_cancel, bet_id}, _from, _market_infos) do
+    case Process.get(id) do
+      :nil ->
+        :ok # if there is no bet to cancel, ok
+      bet ->
+        updated_bet = %{ bet_type: bet[:bet_type],
+                         market_id: bet[:market_id],
+                         user_id: bet[:user_id],
+                         odds: bet[:odds],
+                         original_stake: bet[:original_stake], # original stake
+                         remaining_stake: bet[:remaining_stake], # non-matched stake
+                         matched_bets: bet[:matched_bets], # list of matched bets
+                         status: :cancelled
+                      }
+        Process.put(bet_id, updated_bet)
+        receive do reply -> bet[:remaining_stake] end
+        # if there is a bet, we cancel it and return the stake to the user.
+  end
+
+  def handle_call({:bet_cancel_whole, bet_id}, _from, _market_infos) do
+    case Process.get(id) do
+      :nil ->
+        :ok # if there is no bet to cancel, ok
+      bet ->
+        updated_bet = %{ bet_type: bet[:bet_type],
+                         market_id: bet[:market_id],
+                         user_id: bet[:user_id],
+                         odds: bet[:odds],
+                         original_stake: bet[:original_stake], # original stake
+                         remaining_stake: bet[:original_stake], # non-matched stake
+                         matched_bets: [], # list of matched bets
+                         status: :cancelled
+                      }
+        Process.put(bet_id, updated_bet)
+        receive do reply -> bet[:original_stake] end
+        # if there is a bet, we cancel it and return the stake to the user.
+  end
+
+  def handle_call({:bet_get, bet_id}, _from, _market_infos) do
+    bet = Process.get(bet_id)
+    if bet == :nil do
+        {:error, :nil}
+    else
+      {:ok, bet}
+    end
   end
 
   def extract_info_bet(bet_id, acc) do

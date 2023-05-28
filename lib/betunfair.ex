@@ -13,7 +13,7 @@ defmodule BetUnfair do
   # are "stored" using the main module along with the Process module
 
   @type user_id :: String.t()
-  @type bet_id :: String.t()
+  @type bet_id :: %{user: user_id(), market: market_id()}
   @type users :: %{user_id() => %{user: String.t(), balance: integer(), bets: [bet_id()]}}
   # A market is defined by the participants to a bet
   @type market_id :: pid()
@@ -522,35 +522,37 @@ defmodule BetUnfair do
   ##########################
   #### BETS INTERACTION ####
   ##########################
+ # ------------------------- BETS -------------------------
 
   @spec bet_back(user_id :: user_id(), market_id :: market_id(),
-                 stake :: integer(), odds :: integer()) :: {:ok, bet_id()}
+  stake :: integer(), odds :: integer()) :: {:ok, bet_id()}
   # creates a backing bet by the specified user and for the market specified.
   def bet_back(user_id, market_id, stake, odds) do
-    bet_id= user_id <> market_id
+    bet_id = {user_id, market_id} # store the bet_id as tuple
     bet = Process.get(:bet, %{})
     if Map.has_key?(bet,bet_id) do
-      {:error, bet_id}
+      {:error, bet_id} # if bet exists, error is returned
     else
       updated_bet = Map.put(bet, %{:back, market_id, user_id, odds, stake,
-                                   _remaining_stake, [], _status})
+      _remaining_stake, [], _status})
       Process.put(:bet, updated_bet)
-      {:ok,bet_id}
+      {:ok,bet_id} # else, the bet is created
+
   end
 
   @spec bet_lay(user_id :: user_id(),market_id :: market_id(),
-                stake :: integer(),odds :: integer()) :: {:ok, bet_id()}
+  stake :: integer(),odds :: integer()) :: {:ok, bet_id()}
   # creates a lay bet by the specified user and for the market specified.
   def bet_lay(user_id, market_id, stake, odds) do
-    bet_id= user_id <> market_id
+    bet_id = {user_id, market_id} # store the bet_id as tuple
     bet = Process.get(:bet, %{})
     if Map.has_key?(bet,bet_id) do
-      {:error, bet_id}
+      {:error, bet_id} # if bet exists, error is returned
     else
       updated_bet = Map.put(bet, %{:lay, market_id, user_id, odds, stake,
-                                   _remaining_stake, [_bet_id], _status})
+      _remaining_stake, [_bet_id], _status})
       Process.put(:bet, updated_bet)
-      {:ok,bet_id}
+      {:ok,bet_id} # else, the bet is created
 
   end
 
@@ -559,26 +561,53 @@ defmodule BetUnfair do
   def bet_cancel(id) do
     case Process.get(id) do
       :nil ->
-        :ok
+        :ok # if there is no bet to cancel, ok
       _ ->
         bet = Process.get(:bet)
-        if Map.has_key?(bet,id) &&
-            Enum.member?(market_pending_backs(Map.get(bet,market_id)),id)do
+        if Map.has_key?(bet,id) && Enum.member?(market_pednding_backs(Map.get(bet,elem(id,1))),id)do
           Map.put(bet, :status, :cancelled)
-          receive do reply -> reply end
+          user_deposit(elem(id,0),Map.get(bet,:original_stake))
+            receive do reply -> reply end
+            # if there is a bet, we cancel it and return the stake to the user.
         else
-          :error
+          :error # else, error
 
   end
 
-  @spec bet_get(id :: bet_id()) :: {:ok, bet()}
+  @spec bet_cancel_whole(id :: bet_id()) :: :ok
+  # cancels the parts of a bet that has not been matched yet.
+  def bet_cancel_whole(id) do
+    case Process.get(id) do
+      :nil ->
+        :ok # if there is no bet to cancel, ok
+      _ ->
+        bet = Process.get(:bet)
+        if Map.has_key?(bet,id) && Enum.member?(market_bets(Map.get(bet,elem(id,1))),id)do
+          Map.put(bet, :status, :cancelled)
+          user_deposit(elem(id,0),Map.get(bet,:original_stake))
+            receive do reply -> reply end
+            # if there is a bet, we cancel it and return the stake to the user.
+        else
+          :error # else, error
+
+  end
+
+  @spec bet_get(id :: bet_id()) ::{:ok,
+           %{bet_type: :back | :lay, market_id: market_id(), user_id: user_id(),
+             odds: integer(),
+             original_stake: integer(),  # original stake
+             remaining_stake: integer(), # non-matched stake
+             matched_bets: [bet_id()], # list of matched bets
+             status:
+               :active | :cancelled | :market_cancelled | {:market_settled, boolean()}}}
   def bet_get(id) do
     bet = Process.get(:bet)
     if Map.has_key?(bet, id) do
       {:ok,bet_to_get}= Map.fetch(bet,id)
-      {:ok, &{bet_type: bet_to_get[:bet_type],bet_to_get[:odds],
-              bet_to_get[:original_stake], bet_to_get[:remaining_stake],
-              bet_to_get[:matched_bets[id]], bet_to_get[:status]}}
+      {:ok,&{bet_type: bet_to_get[:bet_type],bet_to_get[:odds],
+      bet_to_get[:original_stake], bet_to_get[:remaining_stake],
+      bet_to_get[:matched_bets[id]], bet_to_get[:status]}}
+
   end
 
   ######################

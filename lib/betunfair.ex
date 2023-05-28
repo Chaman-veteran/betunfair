@@ -257,17 +257,6 @@ defmodule BetUnfair do
   #### MARKET INTERACTION ####
   ############################
 
-  defp filter([],_) do
-    []
-  end
-  defp filter([head | tail], p) do
-    if p.(head) do
-      [head | filter(tail, p)]
-    else
-      filter(tail,p)
-    end
-  end
-
   @doc """
   Creates a market with the unique name,
   and a potentially longer description.
@@ -618,14 +607,15 @@ defmodule BetUnfair do
 
   def handle_call(:market_match, _from, %{market: market_info, backs: backs, lays: lays}) do
     ## TODO : match the bets in this market if possible ##
+    # Pre-condition : backs and lays are sorted by the odds and the time they were placed
   end
 
   def handle_call({:new_bet, bet_id, market_id, user_id, bet_type, odds, stake},
-                  _from, _market_infos) do
+                  _from, %{market: market_info, backs: backs, lays: lays}) do
     bet = Process.get(bet_id)
+    # if bet doesn't exists, it is created,
+    # else, error is returned
     if bet == :nil do
-      {:error, bet_id} # if bet exists, error is returned
-    else
       bet_infos = %{ bet_type: bet_type,
                      market_id: market_id,
                      user_id: user_id,
@@ -637,7 +627,17 @@ defmodule BetUnfair do
                    }
       updated_bet = Process.put(bet_id, bet_infos)
       Process.put(bet_id, updated_bet)
-      {:ok,bet_id} # else, the bet is created
+	  # We insert the bet in the market's state
+      if bet_type == :back do
+		updated_lays = lays
+		backs = insert_by(bet_id, backs, fn id -> Process.get(id)[:odds] end)
+      else
+		updated_backs = backs
+		lays = insert_by(bet_id, lays, fn id -> Process.get(id)[:odds] end)
+      end
+      {:reply, {:ok, bet_id}, %{market: market_info, backs: updated_backs, lays: updated_lays}}
+    else
+      {:reply, {:error, bet_id}, %{market: market_info, backs: backs, lays: lays}}
   end
 
   def handle_call({:bet_cancel, bet_id}, _from, _market_infos) do
@@ -688,11 +688,37 @@ defmodule BetUnfair do
   end
 
   def extract_info_bet(bet_id, acc) do
-    bet_infos = elem(bet_get(bet_id),1)
+    {_ok, bet_infos} = bet_get(bet_id)
     if bet_infos[:matched_bets] != [] do
       [{bet_infos[:odds], bet_id} | acc]
     else
       acc
     end
+  end
+
+  ########################
+  #### MISC FUNCTIONS ####
+  ########################
+
+  defp filter([],_) do
+    []
+  end
+  defp filter([head | tail], p) do
+    if p.(head) do
+      [head | filter(tail, p)]
+    else
+      filter(tail,p)
+    end
+  end
+
+  def insert_by(elem, [], _) do
+	[elem]
+  end
+  def insert_by(elem, [head | tail], function) do
+	if function.(head) < function.(elem) do
+		[head | insert_by(elem, tail, functio)]
+	else
+		[elem | [head | tail]]
+	end
   end
 end

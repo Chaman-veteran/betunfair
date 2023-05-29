@@ -520,19 +520,29 @@ defmodule BetUnfair do
   ##########################
 
   @spec bet_back(user_id :: user_id(), market_id :: market_id(),
-                 stake :: integer(), odds :: integer()) :: {:ok | :error, bet_id()}
+                 stake :: integer(), odds :: integer()) :: {:ok, bet_id()} | :error
   # creates a backing bet by the specified user and for the market specified.
   def bet_back(user_id, market_id, stake, odds) do
-    bet_id = %{user: user_id, market: market_id} # store the bet_id as tuple
-    GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
+    {:ok, %{balance: balance}} = user_get(user_id)
+    if balance < stake do
+      :error
+    else
+      bet_id = %{user: user_id, market: market_id} # store the bet_id as tuple
+      GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
+    end
   end
 
   @spec bet_lay(user_id :: user_id(),market_id :: market_id(),
-                stake :: integer(),odds :: integer()) :: {:ok | :error, bet_id()}
+                stake :: integer(),odds :: integer()) :: {:ok, bet_id()} | :error
   # creates a lay bet by the specified user and for the market specified.
   def bet_lay(user_id, market_id, stake, odds) do
-    bet_id = %{uesr: user_id, market: market_id} # store the bet_id as tuple
-    GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
+    {:ok, %{balance: balance}} = user_get(user_id)
+    if balance < stake do
+      :error
+    else
+      bet_id = %{uesr: user_id, market: market_id} # store the bet_id as tuple
+      GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
+    end
   end
 
   @spec bet_cancel(id :: bet_id()) :: :ok
@@ -659,7 +669,7 @@ defmodule BetUnfair do
         {:reply, {:ok, bet_id}, %{market: market_info, backs: updated_backs, lays: updated_lays}}
       end
     else
-      {:reply, {:error, bet_id}, %{market: market_info, backs: backs, lays: lays}}
+      {:reply, :error, %{market: market_info, backs: backs, lays: lays}}
 	  end
   end
 

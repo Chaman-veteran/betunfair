@@ -304,7 +304,14 @@ defmodule BetUnfair do
   """
   @spec market_list() :: {:ok, [market_id()]}
   def market_list() do
-    valide_market = &(&1 != :users &&  &1 != :market_server)
+    valide_market = &(  &1 != :users
+                     && &1 != :market_server
+                     && &1 != :iex_evaluator
+                     && &1 != :iex_server
+                     && &1 != :iex_history
+                     && &1 != :"$ancestors"
+                     && &1 != :"$initial_call"
+                     && &1 != :rand_seed)
     list_markets = filter(Process.get_keys(), valide_market)
     {:ok, list_markets}
   end
@@ -321,8 +328,16 @@ defmodule BetUnfair do
   @spec market_list_active() :: {:ok, [market_id()]}
   def market_list_active() do
     list_markets = Process.get()
-    valide_market = &(elem(&1,1) == :on)
-    list_active_markets = filter(list_markets, valide_market)
+    valide_market = &(  &1 != :users
+                     && &1 != :market_server
+                     && &1 != :iex_evaluator
+                     && &1 != :iex_server
+                     && &1 != :iex_history
+                     && &1 != :"$ancestors"
+                     && &1 != :"$initial_call"
+                     && &1 != :rand_seed)
+    valide_market_on = &(valide_market.(elem(&1,0)) && elem(&1,1) == :on)
+    list_active_markets = filter(list_markets, valide_market_on)
     {:ok, list_active_markets}
   end
 
@@ -338,7 +353,7 @@ defmodule BetUnfair do
   """
   @spec market_cancel(id :: market_id()):: :ok
   def market_cancel(id) do
-    market = Process.get(id)
+    {market, _} = Process.get(id)
     if market == :nil do
       :ok
     else
@@ -359,7 +374,7 @@ defmodule BetUnfair do
   """
   @spec market_freeze(id :: market_id()):: :ok
   def market_freeze(id) do
-    market = Process.get(id)
+    {market, _} = Process.get(id)
     if market == :nil do
       :ok
     else
@@ -379,7 +394,7 @@ defmodule BetUnfair do
   """
   @spec market_settle(id :: market_id(), result :: boolean()):: :ok
   def market_settle(id, result) do
-    market = Process.get(id)
+    {market, _} = Process.get(id)
     if market == :nil do
       :error
     else
@@ -398,7 +413,7 @@ defmodule BetUnfair do
   """
   @spec market_bets(id :: market_id()) :: {:ok, Enumerable.t(bet_id())}
   def market_bets(id) do
-    market = Process.get(id)
+    {market, _} = Process.get(id)
     if market == :nil do
       {:ok, []}
     else
@@ -420,7 +435,7 @@ defmodule BetUnfair do
   """
   @spec market_pending_backs(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
   def market_pending_backs(id) do
-    market = Process.get(id)
+    {market, _} = Process.get(id)
     if market == :nil do
       {:ok, []}
     else
@@ -442,7 +457,7 @@ defmodule BetUnfair do
   """
   @spec market_pending_lays(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
   def market_pending_lays(id) do
-    market = Process.get(id)
+    {market, _} = Process.get(id)
     if market == :nil do
       {:ok, []}
     else
@@ -470,7 +485,7 @@ defmodule BetUnfair do
   """
   @spec market_get(id :: user_id()) :: {:ok | :error, market()}
   def market_get(id) do
-    market = Process.get(id)
+    {market, _} = Process.get(id)
     if market == :nil do
       {:error, %{}}
     else
@@ -492,7 +507,7 @@ defmodule BetUnfair do
   """
   @spec market_match(id :: market_id()):: :ok
   def market_match(id) do
-    market = Process.get(id)
+    {market, _} = Process.get(id)
     if market == :nil do
       :ok
     else
@@ -536,7 +551,7 @@ defmodule BetUnfair do
 
   @spec bet_get(id :: bet_id()) ::{:ok, bet()}
   def bet_get(id) do
-    GenServer.call(id[:market], {:bet_get,id})
+    GenServer.call(id[:market], {:bet_get, id})
   end
 
   @spec bet_settle(id :: bet_id(), result :: boolean()) :: :ok | :error
@@ -632,9 +647,8 @@ defmodule BetUnfair do
                      matched_bets: [], # list of matched bets
                      status: :active
                    }
-      updated_bet = Process.put(bet_id, bet_infos)
-      Process.put(bet_id, updated_bet)
-	  # We insert the bet in the market's state
+      Process.put(bet_id, bet_infos)
+	    # We insert the bet in the market's state
       if bet_type == :back do
         updated_lays = lays
         updated_backs = insert_by(bet_id, backs, fn id -> Process.get(id)[:odds] end, :asc)

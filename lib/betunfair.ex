@@ -508,7 +508,7 @@ defmodule BetUnfair do
                  stake :: integer(), odds :: integer()) :: {:ok | :error, bet_id()}
   # creates a backing bet by the specified user and for the market specified.
   def bet_back(user_id, market_id, stake, odds) do
-    bet_id = {user_id, market_id} # store the bet_id as tuple
+    bet_id = %{user: user_id, market: market_id} # store the bet_id as tuple
     GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
   end
 
@@ -516,7 +516,7 @@ defmodule BetUnfair do
                 stake :: integer(),odds :: integer()) :: {:ok | :error, bet_id()}
   # creates a lay bet by the specified user and for the market specified.
   def bet_lay(user_id, market_id, stake, odds) do
-    bet_id = {user_id, market_id} # store the bet_id as tuple
+    bet_id = %{uesr: user_id, market: market_id} # store the bet_id as tuple
     GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
   end
 
@@ -549,7 +549,7 @@ defmodule BetUnfair do
           reply = GenServer.call(id[:market],{:bet_settle, id})
           user_deposit(id[:user], reply)
         else
-          GenServer.call(id[:market],{:bet_settle, id})x
+          GenServer.call(id[:market],{:bet_settle, id})
         end
         :ok
     end
@@ -649,10 +649,10 @@ defmodule BetUnfair do
 	  end
   end
 
-  def handle_call({:bet_cancel, bet_id}, _from, _market_infos) do
+  def handle_call({:bet_cancel, bet_id}, _from, market_infos) do
     case Process.get(bet_id) do
       :nil ->
-        :ok # if there is no bet to cancel, ok
+        {:reply ,:ok, market_infos} # if there is no bet to cancel, ok
       bet ->
         # if there is a bet, we cancel it and return the stake to the user.
         updated_bet = %{ bet_type: bet[:bet_type],
@@ -665,14 +665,14 @@ defmodule BetUnfair do
                          status: :cancelled
                       }
         Process.put(bet_id, updated_bet)
-		    bet[:remaining_stake]
+		    {:reply , bet[:remaining_stake], market_infos}
 	  end
   end
 
-  def handle_call({:bet_cancel_whole, bet_id}, _from, _market_infos) do
+  def handle_call({:bet_cancel_whole, bet_id}, _from, market_infos) do
     case Process.get(bet_id) do
       :nil ->
-        :ok # if there is no bet to cancel, ok
+        {:reply, :ok, market_infos} # if there is no bet to cancel, ok
       bet ->
         # if there is a bet, we cancel it and return the stake to the user.
         updated_bet = %{ bet_type: bet[:bet_type],
@@ -685,25 +685,25 @@ defmodule BetUnfair do
                          status: :cancelled
                       }
         Process.put(bet_id, updated_bet)
-        bet[:original_stake]
+        {:reply, bet[:original_stake], market_infos}
 	  end
   end
 
-  def handle_call({:bet_get, bet_id}, _from, _market_infos) do
+  def handle_call({:bet_get, bet_id}, _from, market_infos) do
     bet = Process.get(bet_id)
     if bet == :nil do
-        {:error, :nil}
+      {:reply, {:error, :nil}, market_infos}
     else
-      {:ok, bet}
+      {:reply, {:ok, bet}, market_infos}
     end
   end
 
-  def handle_call({:bet_settle, bet_id}, _from, _market_infos) do
+  def handle_call({:bet_settle, bet_id}, _from, market_infos) do
     bet = Process.get(bet_id)
     if bet == :nil do
-        {:error, :nil}
+      {:reply, {:error, :nil}, market_infos}
     else
-      {:ok, bet[:odds]*bet[:original_stake]+bet[:remaining_stake]}
+      {:reply, {:ok, bet[:odds]*bet[:original_stake]+bet[:remaining_stake]}, market_infos}
     end
   end
 

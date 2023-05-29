@@ -336,7 +336,7 @@ defmodule BetUnfair do
                      && &1 != :"$ancestors"
                      && &1 != :"$initial_call"
                      && &1 != :rand_seed)
-    valide_market_on = &(valide_market.(elem(&1,0)) && elem(&1,1) == :on)
+    valide_market_on = &(valide_market.(elem(&1,0)) && elem(elem(&1,1),1) == :on)
     list_active_markets = filter(list_markets, valide_market_on)
     {:ok, list_active_markets}
   end
@@ -353,12 +353,12 @@ defmodule BetUnfair do
   """
   @spec market_cancel(id :: market_id()):: :ok
   def market_cancel(id) do
-    {market, _} = Process.get(id)
+    market = Process.get(id)
     if market == :nil do
       :ok
     else
       # Returning all stakes to users
-      GenServer.call(market, :market_cancel)
+      GenServer.call(elem(market,0), :market_cancel)
     end
   end
 
@@ -374,11 +374,11 @@ defmodule BetUnfair do
   """
   @spec market_freeze(id :: market_id()):: :ok
   def market_freeze(id) do
-    {market, _} = Process.get(id)
+    market = Process.get(id)
     if market == :nil do
       :ok
     else
-      GenServer.call(market, :market_freeze)
+      GenServer.call(elem(market,0), :market_freeze)
     end
   end
 
@@ -394,11 +394,11 @@ defmodule BetUnfair do
   """
   @spec market_settle(id :: market_id(), result :: boolean()):: :ok
   def market_settle(id, result) do
-    {market, _} = Process.get(id)
+    market = Process.get(id)
     if market == :nil do
       :error
     else
-      GenServer.call(market, {:market_settle, result})
+      GenServer.call(elem(market,0), {:market_settle, result})
     end
   end
 
@@ -413,11 +413,11 @@ defmodule BetUnfair do
   """
   @spec market_bets(id :: market_id()) :: {:ok, Enumerable.t(bet_id())}
   def market_bets(id) do
-    {market, _} = Process.get(id)
+    market = Process.get(id)
     if market == :nil do
       {:ok, []}
     else
-      GenServer.call(market, :market_bets)
+      GenServer.call(elem(market,0), :market_bets)
     end
   end
 
@@ -435,11 +435,11 @@ defmodule BetUnfair do
   """
   @spec market_pending_backs(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
   def market_pending_backs(id) do
-    {market, _} = Process.get(id)
+    market = Process.get(id)
     if market == :nil do
       {:ok, []}
     else
-      GenServer.call(market, :market_pending_backs)
+      GenServer.call(elem(market,0), :market_pending_backs)
     end
   end
 
@@ -457,11 +457,11 @@ defmodule BetUnfair do
   """
   @spec market_pending_lays(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
   def market_pending_lays(id) do
-    {market, _} = Process.get(id)
+    market = Process.get(id)
     if market == :nil do
       {:ok, []}
     else
-      GenServer.call(market, :market_pending_lays)
+      GenServer.call(elem(market,0), :market_pending_lays)
     end
   end
 
@@ -485,11 +485,11 @@ defmodule BetUnfair do
   """
   @spec market_get(id :: user_id()) :: {:ok | :error, market()}
   def market_get(id) do
-    {market, _} = Process.get(id)
+    market = Process.get(id)
     if market == :nil do
       {:error, %{}}
     else
-      GenServer.call(market, :market_get)
+      GenServer.call(elem(market,0), :market_get)
     end
   end
 
@@ -507,11 +507,11 @@ defmodule BetUnfair do
   """
   @spec market_match(id :: market_id()):: :ok
   def market_match(id) do
-    {market, _} = Process.get(id)
+    market = Process.get(id)
     if market == :nil do
       :ok
     else
-      GenServer.call(market, :market_match)
+      GenServer.call(elem(market,0), :market_match)
     end
   end
 

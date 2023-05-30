@@ -311,7 +311,8 @@ defmodule BetUnfair do
                      && &1 != :iex_history
                      && &1 != :"$ancestors"
                      && &1 != :"$initial_call"
-                     && &1 != :rand_seed)
+                     && &1 != :rand_seed
+                     && &1 != :counter)
     list_markets = filter(Process.get_keys(), valide_market)
     {:ok, list_markets}
   end
@@ -335,7 +336,8 @@ defmodule BetUnfair do
                      && &1 != :iex_history
                      && &1 != :"$ancestors"
                      && &1 != :"$initial_call"
-                     && &1 != :rand_seed)
+                     && &1 != :rand_seed
+                     && &1 != :counter)
     valide_market_on = &(valide_market.(elem(&1,0)) && elem(elem(&1,1),1) == :on)
     list_active_markets = filter(list_markets, valide_market_on)
     {:ok, list_active_markets}
@@ -353,12 +355,12 @@ defmodule BetUnfair do
   """
   @spec market_cancel(id :: market_id()):: :ok
   def market_cancel(id) do
-    market = Process.get(id)
+    {market, _on?} = Process.get(id, {:nil, :off})
     if market == :nil do
       :ok
     else
       # Returning all stakes to users
-      GenServer.call(elem(market,0), :market_cancel)
+      GenServer.call(market, :market_cancel)
     end
   end
 
@@ -374,11 +376,11 @@ defmodule BetUnfair do
   """
   @spec market_freeze(id :: market_id()):: :ok
   def market_freeze(id) do
-    market = Process.get(id)
+    {market, _on?} = Process.get(id, {:nil, :off})
     if market == :nil do
       :ok
     else
-      GenServer.call(elem(market,0), :market_freeze)
+      GenServer.call(market, :market_freeze)
     end
   end
 
@@ -394,11 +396,11 @@ defmodule BetUnfair do
   """
   @spec market_settle(id :: market_id(), result :: boolean()):: :ok
   def market_settle(id, result) do
-    market = Process.get(id)
+    {market, _on?} = Process.get(id, {:nil, :off})
     if market == :nil do
       :error
     else
-      GenServer.call(elem(market,0), {:market_settle, result})
+      GenServer.call(market, {:market_settle, result})
     end
   end
 
@@ -413,11 +415,11 @@ defmodule BetUnfair do
   """
   @spec market_bets(id :: market_id()) :: {:ok, Enumerable.t(bet_id())}
   def market_bets(id) do
-    market = Process.get(id)
+    {market, _on?} = Process.get(id, {:nil, :off})
     if market == :nil do
       {:ok, []}
     else
-      GenServer.call(elem(market,0), :market_bets)
+      GenServer.call(market, :market_bets)
     end
   end
 
@@ -435,11 +437,11 @@ defmodule BetUnfair do
   """
   @spec market_pending_backs(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
   def market_pending_backs(id) do
-    market = Process.get(id)
+    {market, _on?} = Process.get(id, {:nil, :off})
     if market == :nil do
       {:ok, []}
     else
-      GenServer.call(elem(market,0), :market_pending_backs)
+      GenServer.call(market, :market_pending_backs)
     end
   end
 
@@ -457,11 +459,11 @@ defmodule BetUnfair do
   """
   @spec market_pending_lays(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
   def market_pending_lays(id) do
-    market = Process.get(id)
+    {market, _on?} = Process.get(id, {:nil, :off})
     if market == :nil do
       {:ok, []}
     else
-      GenServer.call(elem(market,0), :market_pending_lays)
+      GenServer.call(market, :market_pending_lays)
     end
   end
 
@@ -485,11 +487,11 @@ defmodule BetUnfair do
   """
   @spec market_get(id :: user_id()) :: {:ok | :error, market()}
   def market_get(id) do
-    market = Process.get(id)
+    {market, _on?} = Process.get(id, {:nil, :off})
     if market == :nil do
       {:error, %{}}
     else
-      GenServer.call(elem(market,0), :market_get)
+      GenServer.call(market, :market_get)
     end
   end
 
@@ -507,11 +509,11 @@ defmodule BetUnfair do
   """
   @spec market_match(id :: market_id()):: :ok
   def market_match(id) do
-    market = Process.get(id)
+    {market, _on?} = Process.get(id, {:nil, :off})
     if market == :nil do
       :ok
     else
-      GenServer.call(elem(market,0), :market_match)
+      GenServer.call(market, :market_match)
     end
   end
 
@@ -545,9 +547,9 @@ defmodule BetUnfair do
     if balance < stake do
       :error
     else
-      counter= Enum.count(market_bets(market_id), fn{a,b,_} =
-        tuple -> a == elem(bet_id,0) && a == elem(bet_id,1) end)
-      bet_id = %{user: user_id, market: market_id, counter: counter+1} # store the bet_id as tuple
+      counter = Process.get(:counter, 0)
+      Process.put(:counter, counter+1)
+      bet_id = %{user: user_id, market: market_id, counter: counter} # store the bet_id as tuple
       GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
     end
   end
@@ -577,7 +579,9 @@ defmodule BetUnfair do
     if balance < stake do
       :error
     else
-      bet_id = %{uesr: user_id, market: market_id} # store the bet_id as tuple
+      counter = Process.get(:counter, 0)
+      Process.put(:counter, counter+1)
+      bet_id = %{user: user_id, market: market_id, counter: counter} # store the bet_id as tuple
       GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
     end
   end

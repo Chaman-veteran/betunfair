@@ -160,7 +160,7 @@ defmodule BetUnfair do
     users = Process.get(:users)
     if Map.has_key?(users, id) and amount > 0 do
       {:ok, user} = Map.fetch(users, id)
-      new_amount = user[:balance] +amount
+      new_amount = user[:balance] + amount
       updated_users = Map.replace(users, id, %{name: user[:name], balance: new_amount, bets: user[:bets]})
       Process.put(:users, updated_users)
       :ok
@@ -364,6 +364,7 @@ defmodule BetUnfair do
       # and if so, it could give weird results
       # (one bet cancel may overwrite another that's in //)
       List.foldl(list_bets, :nil, fn bet_id, _acc -> bet_cancel_whole(bet_id) end)
+      :ok
     end
   end
 
@@ -385,6 +386,7 @@ defmodule BetUnfair do
     else
       {:ok, list_bets} = GenServer.call(market, :market_freeze)
       List.foldl(list_bets, :nil, fn bet_id, _acc -> bet_cancel(bet_id) end)
+      :ok
     end
   end
 
@@ -404,7 +406,9 @@ defmodule BetUnfair do
     if market == :nil do
       :error
     else
-      GenServer.call(market, {:market_settle, result})
+      {:ok, list_bets} = GenServer.call(market, {:market_settle, result})
+      List.foldl(list_bets, :nil, fn bet_id, _acc -> bet_settle(bet_id,result) end)
+      :ok
     end
   end
 
@@ -611,8 +615,8 @@ defmodule BetUnfair do
   # cancels the parts of a bet that has not been matched yet.
   def bet_cancel(id) do
     # Returning all stakes to users
-    reply = GenServer.call(id[:market], {:bet_cancel, id})
-    user_deposit(id[:user], reply)
+    amount = GenServer.call(id[:market], {:bet_cancel, id})
+    user_deposit(id[:user], amount)
     :ok
   end
 
@@ -620,8 +624,8 @@ defmodule BetUnfair do
   # cancels the parts of a bet that has not been matched yet.
   def bet_cancel_whole(id) do
     # Returning all stakes to users
-    reply = GenServer.call(id[:market], {:bet_cancel_whole, id})
-    user_deposit(id[:user], reply)
+    amount = GenServer.call(id[:market], {:bet_cancel_whole, id})
+    user_deposit(id[:user], amount)
     :ok
   end
 
@@ -648,15 +652,15 @@ defmodule BetUnfair do
 
   @spec bet_settle(id :: bet_id(), result :: boolean()) :: :ok | :error
   def bet_settle(id, result) do
-    case bet_get(id) do
+    case elem(bet_get(id),1) do
       :nil->
         :error
       _->
         if(result) do
-          reply = GenServer.call(id[:market],{:bet_settle, id})
-          user_deposit(id[:user], reply)
+          amount = GenServer.call(id[:market],{:bet_settle, id, result})
+          user_deposit(id[:user], amount)
         else
-          GenServer.call(id[:market],{:bet_settle, id})
+          GenServer.call(id[:market],{:bet_settle, id, result})
         end
         :ok
     end
@@ -668,11 +672,10 @@ defmodule BetUnfair do
 
   def handle_call({:market_settle, result}, _from, %{market: market_info, backs: backs, lays: lays}) do
     list_bets = backs ++ lays
-    List.foldl(list_bets, :nil, fn bet_id, _acc -> bet_settle(bet_id,result) end)
     updated_market_info = %{ name: market_info[:name],
                              description: market_info[:description],
                              status: {:settled, result}}
-    {:reply, :ok, %{market: updated_market_info, backs: backs, lays: lays}}
+    {:reply, {:ok, list_bets}, %{market: updated_market_info, backs: backs, lays: lays}}
   end
 
   def handle_call(:market_freeze, _from, %{market: market_info, backs: backs, lays: lays}) do
@@ -753,7 +756,7 @@ defmodule BetUnfair do
   def handle_call({:bet_cancel, bet_id}, _from, market_infos) do
     case Process.get(bet_id) do
       :nil ->
-        {:reply ,:ok, market_infos} # if there is no bet to cancel, ok
+        {:reply, :ok, market_infos} # if there is no bet to cancel, ok
       bet ->
         # if there is a bet, we cancel it and return the stake to the user.
         updated_bet = %{ bet_type: bet[:bet_type],
@@ -766,7 +769,7 @@ defmodule BetUnfair do
                          status: :cancelled
                       }
         Process.put(bet_id, updated_bet)
-		    {:reply , bet[:remaining_stake], market_infos}
+		    {:reply, bet[:remaining_stake], market_infos}
 	  end
   end
 
@@ -799,12 +802,23 @@ defmodule BetUnfair do
     end
   end
 
-  def handle_call({:bet_settle, bet_id}, _from, market_infos) do
+  def handle_call({:bet_settle, bet_id, result}, _from, market_infos) do
     bet = Process.get(bet_id)
     if bet == :nil do
-      {:reply, {:error, :nil}, market_infos}
+      {:reply, :nil, market_infos}
     else
-      {:reply, {:ok, bet[:odds]*bet[:original_stake]+bet[:remaining_stake]}, market_infos}
+      updated_bet = %{ bet_type: bet[:bet_type],
+                       market_id: bet[:market_id],
+                       user_id: bet[:user_id],
+                       odds: bet[:odds],
+                       original_stake: bet[:original_stake], # original stake
+                       remaining_stake: bet[:original_stake], # non-matched stake
+                       matched_bets: [], # list of matched bets
+                       status: {:settled, result}
+                    }
+      Process.put(bet_id, updated_bet)
+      betted = bet[:original_stake] - bet[:remaining_stake]
+      {:reply, Kernel.trunc((bet[:odds]*betted)/100)+bet[:remaining_stake], market_infos}
     end
   end
 
@@ -832,7 +846,7 @@ defmodule BetUnfair do
         end
         if get_back[:odds] <= get_lay[:odds] do
           # There's a match !
-          allowed_to_loose = get_back[:remaining_stake]*get_back[:odds]-get_back[:remaining_stake]
+          allowed_to_loose = Kernel.trunc(get_back[:remaining_stake]*get_back[:odds]/100)-get_back[:remaining_stake]
           if allowed_to_loose >= get_lay[:remaining_stake] do
             # We consume all of the lay stake
             updated_lay = %{ bet_type: get_lay[:bet_type],

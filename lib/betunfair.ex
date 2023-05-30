@@ -359,8 +359,11 @@ defmodule BetUnfair do
     if market == :nil do
       :ok
     else
-      # Returning all stakes to users
-      GenServer.call(market, :market_cancel)
+      {:ok, list_bets} = GenServer.call(market, :market_cancel)
+      # We could use map but it may be executed in //
+      # and if so, it could give weird results
+      # (one bet cancel may overwrite another that's in //)
+      List.foldl(list_bets, :nil, fn bet_id, _acc -> bet_cancel_whole(bet_id) end)
     end
   end
 
@@ -380,7 +383,8 @@ defmodule BetUnfair do
     if market == :nil do
       :ok
     else
-      GenServer.call(market, :market_freeze)
+      {:ok, list_bets} = GenServer.call(market, :market_freeze)
+      List.foldl(list_bets, :nil, fn bet_id, _acc -> bet_cancel(bet_id) end)
     end
   end
 
@@ -606,6 +610,7 @@ defmodule BetUnfair do
   @spec bet_cancel(id :: bet_id()) :: :ok
   # cancels the parts of a bet that has not been matched yet.
   def bet_cancel(id) do
+    # Returning all stakes to users
     reply = GenServer.call(id[:market], {:bet_cancel, id})
     user_deposit(id[:user], reply)
     :ok
@@ -614,7 +619,10 @@ defmodule BetUnfair do
   @spec bet_cancel_whole(id :: bet_id()) :: :ok
   # cancels the parts of a bet that has not been matched yet.
   def bet_cancel_whole(id) do
-    GenServer.call(id[:market], {:bet_cancel_whole, id})
+    # Returning all stakes to users
+    reply = GenServer.call(id[:market], {:bet_cancel_whole, id})
+    user_deposit(id[:user], reply)
+    :ok
   end
 
   @spec bet_get(id :: bet_id()) ::{:ok, bet()}
@@ -669,23 +677,18 @@ defmodule BetUnfair do
 
   def handle_call(:market_freeze, _from, %{market: market_info, backs: backs, lays: lays}) do
     list_bets = backs ++ lays
-    List.foldl(list_bets, :nil, fn bet_id, _acc -> bet_cancel(bet_id) end)
     updated_market_info = %{ name: market_info[:name],
                              description: market_info[:description],
                              status: :frozen}
-    {:reply, :ok, %{market: updated_market_info, backs: backs, lays: lays}}
+    {:reply, {:ok, list_bets}, %{market: updated_market_info, backs: backs, lays: lays}}
   end
 
   def handle_call(:market_cancel, _from, %{market: market_info, backs: backs, lays: lays}) do
-    # We could use map but it may be executed in //
-    # and if so, it could give weird results
-    # (one bet cancel may overwrite another that's in //)
     list_bets = backs ++ lays
-    List.foldl(list_bets, [], fn bet_id, _acc -> bet_cancel_whole(bet_id) end)
     updated_market_info = %{ name: market_info[:name],
                              description: market_info[:description],
                              status: :cancelled}
-    {:reply, :ok, %{market: updated_market_info, backs: backs, lays: lays}}
+    {:reply, {:ok, list_bets}, %{market: updated_market_info, backs: backs, lays: lays}}
   end
 
   def handle_call(:market_bets, _from, %{market: market_info, backs: backs, lays: lays}) do

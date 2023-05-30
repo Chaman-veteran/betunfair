@@ -249,9 +249,9 @@ defmodule BetUnfair do
     users = Process.get(:users)
     if Map.has_key?(users, id) do
       {:ok, user} = Map.fetch(users, id)
-      user[:bets]
+      {:ok, user[:bets]}
     else
-      []
+      {:ok, []}
     end
   end
 
@@ -545,9 +545,17 @@ defmodule BetUnfair do
   def bet_back(user_id, market_id, stake, odds) do
     can_bet? = user_withdraw(user_id, stake)
     if can_bet? == :ok do
+      # Create the bet_id
       counter = Process.get(:counter, 0)
       Process.put(:counter, counter+1)
       bet_id = %{user: user_id, market: market_id, counter: counter} # store the bet_id as tuple
+      # Add the bet to the user informations
+      users = Process.get(:users)
+      {:ok, user} = Map.fetch(users, user_id)
+      updated_user = %{name: user[:name], balance: user[:balance], bets: [bet_id | user[:bets]]}
+      updated_users = Map.put(users, user_id, updated_user)
+      Process.put(:users, updated_users)
+      # Create the new bet in the market
       GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
     else
       :error
@@ -577,9 +585,17 @@ defmodule BetUnfair do
   def bet_lay(user_id, market_id, stake, odds) do
     can_bet? = user_withdraw(user_id, stake)
     if can_bet? == :ok do
+      # Create the bet_id
       counter = Process.get(:counter, 0)
       Process.put(:counter, counter+1)
       bet_id = %{user: user_id, market: market_id, counter: counter} # store the bet_id as tuple
+      # Add the bet to the user informations
+      users = Process.get(:users)
+      {:ok, user} = Map.fetch(users, user_id)
+      updated_user = %{name: user[:name], balance: user[:balance], bets: [bet_id | user[:bets]]}
+      updated_users = Map.put(users, user_id, updated_user)
+      Process.put(:users, updated_users)
+      # Create the new bet in the market
       GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
     else
       :error

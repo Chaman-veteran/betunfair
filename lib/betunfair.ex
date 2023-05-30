@@ -14,7 +14,7 @@ defmodule BetUnfair do
 
   @type user_id :: String.t()
   @type market_id :: pid()
-  @type bet_id :: %{user: user_id(), market: market_id()}
+  @type bet_id :: %{user: user_id(), market: market_id(), counter: integer()}
   @type users :: %{user_id() => %{user: String.t(), balance: integer(), bets: [bet_id()]}}
   # A market is defined by the participants to a bet
   @type market :: %{ name: String.t(),
@@ -519,6 +519,24 @@ defmodule BetUnfair do
   #### BETS INTERACTION ####
   ##########################
 
+  @doc """
+  Back a bet. In this case the backer takes a
+  position of the bookie and offers the bet,
+  providing a bet type :back.
+
+  ## Parameters
+    - id, the user identifier
+    - market, the identifier of the market
+    - odds, the odds to which the back bet is taken
+    - stake, the stake of the bet
+
+  ## Examples
+
+      iex> Betunfair.bet_back("Alice", 2.10, 100)
+      {:ok, PID<_>}
+
+  """
+
   @spec bet_back(user_id :: user_id(), market_id :: market_id(),
                  stake :: integer(), odds :: integer()) :: {:ok, bet_id()} | :error
   # creates a backing bet by the specified user and for the market specified.
@@ -527,11 +545,30 @@ defmodule BetUnfair do
     if balance < stake do
       :error
     else
-      bet_id = %{user: user_id, market: market_id} # store the bet_id as tuple
+      counter= Enum.count(market_bets(market_id), fn{a,b,_} =
+        tuple -> a == elem(bet_id,0) && a == elem(bet_id,1) end)
+      bet_id = %{user: user_id, market: market_id, counter: counter+1} # store the bet_id as tuple
       GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
     end
   end
 
+  @doc """
+  Lay a bet. In this case a backer takes a
+  position of the bookie and offers the bet,
+  providing a bet type :lay.
+
+  ## Parameters
+    - id, the user identifier
+    - market, the identifier of the market
+    - odds, the odds to which the lay bet is taken
+    - stake, the stake of the bet
+
+  ## Examples
+
+      iex> Betunfair.bet_lay("Alice", 0.15, 50)
+      {:ok, PID<_>}
+
+  """
   @spec bet_lay(user_id :: user_id(),market_id :: market_id(),
                 stake :: integer(),odds :: integer()) :: {:ok, bet_id()} | :error
   # creates a lay bet by the specified user and for the market specified.
@@ -544,6 +581,7 @@ defmodule BetUnfair do
       GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
     end
   end
+
 
   @spec bet_cancel(id :: bet_id()) :: :ok
   # cancels the parts of a bet that has not been matched yet.
@@ -563,6 +601,22 @@ defmodule BetUnfair do
   def bet_get(id) do
     GenServer.call(id[:market], {:bet_get, id})
   end
+
+  @doc """
+  Settle a bet.
+
+  ## Parameters
+    - bet: The bet structure returned by `bet_place/5`
+    - result: The result of the bet (true/false)
+
+  ## Examples
+
+      iex> user = Betunfair.user_create("John", 100)
+      iex> market = Betunfair.market_create("Madrid-Barca", "Who will win?")
+      iex> {:ok, _, bet} = Betunfair.bet_place(user, market, :back, 2, 10)
+      iex> Betunfair.bet_settle(bet, true)
+      :ok
+  """
 
   @spec bet_settle(id :: bet_id(), result :: boolean()) :: :ok | :error
   def bet_settle(id, result) do

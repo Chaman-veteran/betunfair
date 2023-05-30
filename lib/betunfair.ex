@@ -543,14 +543,14 @@ defmodule BetUnfair do
                  stake :: integer(), odds :: integer()) :: {:ok, bet_id()} | :error
   # creates a backing bet by the specified user and for the market specified.
   def bet_back(user_id, market_id, stake, odds) do
-    {:ok, %{balance: balance}} = user_get(user_id)
-    if balance < stake do
-      :error
-    else
+    can_bet? = user_withdraw(user_id, stake)
+    if can_bet? == :ok do
       counter = Process.get(:counter, 0)
       Process.put(:counter, counter+1)
       bet_id = %{user: user_id, market: market_id, counter: counter} # store the bet_id as tuple
       GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
+    else
+      :error
     end
   end
 
@@ -575,14 +575,14 @@ defmodule BetUnfair do
                 stake :: integer(),odds :: integer()) :: {:ok, bet_id()} | :error
   # creates a lay bet by the specified user and for the market specified.
   def bet_lay(user_id, market_id, stake, odds) do
-    {:ok, %{balance: balance}} = user_get(user_id)
-    if balance < stake do
-      :error
-    else
+    can_bet? = user_withdraw(user_id, stake)
+    if can_bet? == :ok do
       counter = Process.get(:counter, 0)
       Process.put(:counter, counter+1)
       bet_id = %{user: user_id, market: market_id, counter: counter} # store the bet_id as tuple
       GenServer.call(market_id, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
+    else
+      :error
     end
   end
 

@@ -37,6 +37,67 @@ defmodule BetUnfair do
   @type market_place :: %{market: market, backs: [bet_id()], lays: [bet_id()]}
 
   ################################
+  #### MODULE INTERACTIONS ####
+  ################################
+
+  # Stop all processes
+  def start_process() do
+    spawn_link(__MODULE__, :stopping, [])
+  end
+
+  def stop_all_processes() do
+    # Retrieve all processes from Betunfair
+    pids = Process.whereis(__MODULE__)
+
+    # Stops each process
+    Enum.each(pids, &Process.exit(&1, :shutdown))
+  end
+
+  def stopping() do
+    parent_pid = Process.monitor(process(self()))
+    case Process.alive?(parent_pid) do
+      true ->
+        :timer.sleep(1000)
+        stopping()
+
+      false ->
+        IO.puts("Betunfair has been stopped.")
+        :ok
+    end
+  end
+
+  # Restart all processes
+  def start_process1() do
+    spawn_link(__MODULE__, :restarting, [])
+  end
+
+  def stop_all_processes1() do
+    # Retrieve all processes from Betunfair
+    pids = Process.whereis(__MODULE__)
+
+    # Stops each process
+    Enum.each(pids, &Process.exit(&1, :shutdown))
+  end
+
+  def restart_all_processes() do
+    stop_all_processes()
+    start_process()
+  end
+
+  def restarting() do
+    parent_pid = Process.monitor(process(self()))
+    case Process.alive?(parent_pid) do
+      true ->
+        :timer.sleep(1000)
+        restarting()
+
+      false ->
+        IO.puts("Betunfair has been restarted.")
+        :ok
+    end
+  end
+
+  ################################
   #### EXCHANGES INTERACTIONS ####
   ################################
 
@@ -54,6 +115,7 @@ defmodule BetUnfair do
       {:ok, %{}}
 
   """
+
   @spec start_link(name :: String.t()) :: {:ok, market_place()}
   def start_link(name) do
     if Process.get(name) == :nil do
@@ -549,7 +611,7 @@ defmodule BetUnfair do
 
   @spec bet_back(user_id :: user_id(), market_id :: market_id(),
                  stake :: integer(), odds :: integer()) :: {:ok, bet_id()} | :error
-  # creates a backing bet by the specified user and for the market specified.
+  # creates a backing bet by the specified user and for the market specified
   def bet_back(user_id, market_id, stake, odds) do
     can_bet? = user_withdraw(user_id, stake)
     if can_bet? == :ok do
@@ -610,6 +672,18 @@ defmodule BetUnfair do
     end
   end
 
+  @doc """
+  Cancels a part of a bet. Returns :ok if successfull
+
+  ## Parameters
+    - id, the bet_id
+
+  ## Examples
+
+      iex> Betunfair.bet_cancel(15)
+      :ok
+
+  """
 
   @spec bet_cancel(id :: bet_id()) :: :ok
   # cancels the parts of a bet that has not been matched yet.
@@ -620,6 +694,19 @@ defmodule BetUnfair do
     :ok
   end
 
+  @doc """
+  Cancels the whole bet. Returns :ok if successfull
+
+  ## Parameters
+    - id, the bet_id
+
+  ## Examples
+
+      iex> Betunfair.bet_cancel(15)
+      :ok
+
+  """
+
   @spec bet_cancel_whole(id :: bet_id()) :: :ok
   # cancels the parts of a bet that has not been matched yet.
   def bet_cancel_whole(id) do
@@ -628,6 +715,19 @@ defmodule BetUnfair do
     user_deposit(id[:user], amount)
     :ok
   end
+
+  @doc """
+  Retrieves information about the bet. Returns :ok and bet if successfull
+
+  ## Parameters
+    - id, the bet_id
+
+  ## Examples
+
+      iex> Betunfair.bet_get(15)
+      {:ok, {:back , 12, 14, 105, 100, 0, matched_bets: [15],:active {:market_settled, true}}}
+
+  """
 
   @spec bet_get(id :: bet_id()) ::{:ok, bet()}
   def bet_get(id) do

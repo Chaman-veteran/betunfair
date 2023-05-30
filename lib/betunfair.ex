@@ -727,7 +727,8 @@ defmodule BetUnfair do
     bet = Process.get(bet_id)
     # if bet doesn't exists, it is created,
     # else, error is returned
-    if bet == :nil do
+    %{status: market_status} = market_info
+    if bet == :nil && market_status == :active do
       bet_infos = %{ bet_type: bet_type,
                      market_id: market_id,
                      user_id: user_id,

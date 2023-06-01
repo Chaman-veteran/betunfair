@@ -152,6 +152,9 @@ defmodule BetUnfair do
   """
   @spec user_deposit(id :: user_id(), amount :: integer()):: :ok | :error
   def user_deposit(id, amount) do
+    IO.inspect("USER DEPOSIT")
+    IO.inspect(user_get(id))
+    IO.inspect(amount)
     users = Process.get(:users)
     if Map.has_key?(users, id) and amount > 0 do
       {:ok, user} = Map.fetch(users, id)
@@ -281,8 +284,8 @@ defmodule BetUnfair do
   """
   @spec init({name :: String.t(), description :: String.t()}) :: {:ok, market_place()}
   def init({name, description}) do
-    Registry.register(Registry.MarketsPlaces, name, :on)
     market_info = %{name: name, description: description, status: :active}
+    Registry.register(Registry.MarketsPlaces, name, :on)
     {:ok, %{market: market_info, backs: [], lays: []}}
   end
 
@@ -532,21 +535,28 @@ defmodule BetUnfair do
                  stake :: integer(), odds :: integer()) :: {:ok, bet_id()} | :error
   # creates a backing bet by the specified user and for the market specified
   def bet_back(user_id, market_id, stake, odds) do
-    can_bet? = user_withdraw(user_id, stake)
-    if can_bet? == :ok do
-      # Create the bet_id
-      counter = Process.get(:counter, 0)
-      Process.put(:counter, counter+1)
-      bet_id = %{user: user_id, market: market_id, counter: counter} # store the bet_id as tuple
-      # Add the bet to the user informations
-      users = Process.get(:users)
-      {:ok, user} = Map.fetch(users, user_id)
-      updated_user = %{name: user[:name], balance: user[:balance], bets: [bet_id | user[:bets]]}
-      updated_users = Map.put(users, user_id, updated_user)
-      Process.put(:users, updated_users)
-      # Create the new bet in the market
-      [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, market_id)
-      GenServer.call(market_pid, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
+    IO.inspect("BET BACK")
+    IO.inspect(user_get(user_id))
+    {:ok, market} = market_get(market_id)
+    if market[:status] == :active do
+      can_bet? = user_withdraw(user_id, stake)
+      if can_bet? == :ok do
+        # Create the bet_id
+        counter = Process.get(:counter, 0)
+        Process.put(:counter, counter+1)
+        bet_id = %{user: user_id, market: market_id, counter: counter} # store the bet_id as tuple
+        # Add the bet to the user informations
+        users = Process.get(:users)
+        {:ok, user} = Map.fetch(users, user_id)
+        updated_user = %{name: user[:name], balance: user[:balance], bets: [bet_id | user[:bets]]}
+        updated_users = Map.put(users, user_id, updated_user)
+        Process.put(:users, updated_users)
+        # Create the new bet in the market
+        [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, market_id)
+        GenServer.call(market_pid, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
+      else
+        :error
+      end
     else
       :error
     end
@@ -573,21 +583,26 @@ defmodule BetUnfair do
                 stake :: integer(),odds :: integer()) :: {:ok, bet_id()} | :error
   # creates a lay bet by the specified user and for the market specified.
   def bet_lay(user_id, market_id, stake, odds) do
-    can_bet? = user_withdraw(user_id, stake)
-    if can_bet? == :ok do
-      # Create the bet_id
-      counter = Process.get(:counter, 0)
-      Process.put(:counter, counter+1)
-      bet_id = %{user: user_id, market: market_id, counter: counter} # store the bet_id as tuple
-      # Add the bet to the user informations
-      users = Process.get(:users)
-      {:ok, user} = Map.fetch(users, user_id)
-      updated_user = %{name: user[:name], balance: user[:balance], bets: [bet_id | user[:bets]]}
-      updated_users = Map.put(users, user_id, updated_user)
-      Process.put(:users, updated_users)
-      # Create the new bet in the market
-      [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, market_id)
-      GenServer.call(market_pid, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
+    {:ok, market} = market_get(market_id)
+    if market[:status] == :active do
+      can_bet? = user_withdraw(user_id, stake)
+      if can_bet? == :ok do
+        # Create the bet_id
+        counter = Process.get(:counter, 0)
+        Process.put(:counter, counter+1)
+        bet_id = %{user: user_id, market: market_id, counter: counter} # store the bet_id as tuple
+        # Add the bet to the user informations
+        users = Process.get(:users)
+        {:ok, user} = Map.fetch(users, user_id)
+        updated_user = %{name: user[:name], balance: user[:balance], bets: [bet_id | user[:bets]]}
+        updated_users = Map.put(users, user_id, updated_user)
+        Process.put(:users, updated_users)
+        # Create the new bet in the market
+        [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, market_id)
+        GenServer.call(market_pid, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
+      else
+        :error
+      end
     else
       :error
     end
@@ -612,6 +627,8 @@ defmodule BetUnfair do
     # Returning all stakes to users
     [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, id[:market])
     amount = GenServer.call(market_pid, {:bet_cancel, id})
+    IO.inspect("BET CANCEL")
+    IO.inspect(amount)
     user_deposit(id[:user], amount)
     :ok
   end
@@ -673,22 +690,31 @@ defmodule BetUnfair do
       iex> Betunfair.bet_settle(bet, true)
       :ok
   """
-
   @spec bet_settle(id :: bet_id(), result :: boolean()) :: :ok | :error
   def bet_settle(id, result) do
-    case elem(bet_get(id),1) do
-      :nil->
-        :error
-      _->
-        [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, id[:market])
-        if(result) do
-          amount = GenServer.call(market_pid,{:bet_settle, id, result})
-          user_deposit(id[:user], amount)
-        else
-          GenServer.call(market_pid,{:bet_settle, id, result})
-        end
-        :ok
+    {:ok, bet} = bet_get(id)
+    IO.inspect("SETTLING THE BET : ")
+    IO.inspect(bet)
+    [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, id[:market])
+    {back_win, lay_win, remaining_stake} = GenServer.call(market_pid,{:bet_settle, id, result})
+    if (result) do
+      IO.inspect(back_win)
+      if (bet[:bet_type] == :back) do
+        user_deposit(id[:user], back_win)
+      else
+        # We give back what's unused
+        user_deposit(id[:user], remaining_stake)
+      end
+    else
+      IO.inspect(lay_win)
+      if (bet[:bet_type] == :lay) do
+        user_deposit(id[:user], lay_win)
+      else
+        # We give back what's unused
+        user_deposit(id[:user], remaining_stake)
+      end
     end
+    :ok
   end
 
   ######################
@@ -789,10 +815,10 @@ defmodule BetUnfair do
                          market_id: bet[:market_id],
                          user_id: bet[:user_id],
                          odds: bet[:odds],
-                         original_stake: bet[:original_stake], # original stake
-                         remaining_stake: bet[:remaining_stake], # non-matched stake
+                         original_stake: bet[:original_stake]-bet[:remaining_stake], # we cancelled the other
+                         remaining_stake: 0, # non-matched stake
                          matched_bets: bet[:matched_bets], # list of matched bets
-                         status: :cancelled
+                         status: :active
                       }
         Process.put(bet_id, updated_bet)
 		    {:reply, bet[:remaining_stake], market_infos}
@@ -830,21 +856,26 @@ defmodule BetUnfair do
 
   def handle_call({:bet_settle, bet_id, result}, _from, market_infos) do
     bet = Process.get(bet_id)
-    if bet == :nil do
-      {:reply, :nil, market_infos}
+    if bet == :nil or bet[:status] != :active do
+      {:reply, {0, 0, 0}, market_infos}
     else
       updated_bet = %{ bet_type: bet[:bet_type],
                        market_id: bet[:market_id],
                        user_id: bet[:user_id],
                        odds: bet[:odds],
                        original_stake: bet[:original_stake], # original stake
-                       remaining_stake: bet[:original_stake], # non-matched stake
+                       remaining_stake: bet[:remaining_stake], # non-matched stake
                        matched_bets: [], # list of matched bets
                        status: {:settled, result}
                     }
       Process.put(bet_id, updated_bet)
       betted = bet[:original_stake] - bet[:remaining_stake]
-      {:reply, Kernel.trunc((bet[:odds]*betted)/100)+bet[:remaining_stake], market_infos}
+      back_win = Kernel.trunc((bet[:odds]*betted)/100)+bet[:remaining_stake]
+      lay_win = Kernel.trunc(betted/(bet[:odds]/100-1))+bet[:remaining_stake]
+      IO.inspect("handle_call bet_settle")
+      IO.inspect(back_win)
+      IO.inspect(lay_win)
+      {:reply, {back_win, lay_win, bet[:remaining_stake]}, market_infos}
     end
   end
 

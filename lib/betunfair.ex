@@ -4,6 +4,7 @@ defmodule BetUnfair do
   """
   use GenServer
   use Agent
+
   ## Variations in the API were made iff we added the error  ##
   ## support for higher robustness                           ##
 
@@ -44,7 +45,7 @@ defmodule BetUnfair do
   @doc """
   Start of the exchange place.
   If an exchange name does not already exist it is created.
-  If it exists the existing data (markets, bets) is recovered.
+  If it exists the existing data (markets, bets, users) is recovered.
 
   ## Parameters
     - name, which is the name of the market created
@@ -57,7 +58,8 @@ defmodule BetUnfair do
   """
   @spec start_link(name :: String.t()) :: {:ok, String.t()}
   def start_link(name) do
-    Agent.start_link(fn -> %{} end, name: MarketPlaces)
+    Agent.start_link(fn -> {name, %{}} end, name: MarketPlaces)
+    Process.put(:agentCreated?, true)
     {:ok, name}
   end
 
@@ -74,7 +76,26 @@ defmodule BetUnfair do
   """
   @spec stop() :: :ok
   def stop() do
-    ## TODO : preserving exchange data ##
+    db = Process.get(:db)
+    if db == :nil do
+      {:ok, db} = CubDB.start_link(data_dir: "./db_files")
+      Process.put(:db, db)
+    end
+    db = Process.get(:db)
+    ## Preserving exchange data
+    {name, markets_map} = Agent.get(MarketPlaces, & &1)
+    fold_data =  fn {_, {pid, _}}, acc -> [GenServer.call(pid, :save_market) | acc] end
+    data_markets = Enum.reduce(markets_map, [], fold_data)
+    data_saved = %{users: Process.get(:users, %{}), counter: Process.get(:counter,0), markets: data_markets}
+    CubDB.put(db, name, data_saved)
+
+    ## Stopping the running exchange
+    # Reset the users and the counter
+    Process.put(:counter, 0)
+    Process.put(:users, %{})
+    # Stopping the GenServers
+    Enum.map(markets_map, fn {_, {pid, _}} -> GenServer.stop(pid) end)
+    Agent.stop(MarketPlaces)
     :ok
   end
 
@@ -91,9 +112,28 @@ defmodule BetUnfair do
 
   """
   @spec clean(name :: String.t()):: :ok
-  def clean(_name) do
-    ## TODO ##
-    :ok
+  def clean(name) do
+    if Process.get(:agentCreated?) do
+      {name_actual, markets_map} = Agent.get(MarketPlaces, & &1)
+      if name_actual == name do
+        # Reset the users and the counter
+        Process.put(:counter, 0)
+        Process.put(:users, %{})
+        # Stopping the GenServers
+        Enum.map(markets_map, fn {_, {pid, _}} -> GenServer.stop(pid) end)
+        Agent.stop(MarketPlaces)
+      else
+        db = Process.get(:db)
+        if db == :nil do
+          # Nothing to clean
+        else
+          CubDB.delete(db, name)
+        end
+      end
+      :ok
+    else
+      :ok
+    end
   end
 
   ##########################
@@ -269,7 +309,7 @@ defmodule BetUnfair do
   @spec market_create(name :: String.t(), description :: String.t()) :: {:ok, market_id()}
   def market_create(name, description) do
     {:ok, pid} = GenServer.start_link(BetUnfair, {name, description})
-    Agent.update(MarketPlaces, &(Map.put(&1, name, {pid, :on})))
+    Agent.update(MarketPlaces, fn {name_exchange, map} -> {name_exchange, (Map.put(map, name, {pid, :on}))} end)
     {:ok, name}
   end
 
@@ -294,7 +334,7 @@ defmodule BetUnfair do
   """
   @spec market_list() :: {:ok, [market_id()]}
   def market_list() do
-    list_markets = Map.keys(Agent.get(MarketPlaces, & &1))
+    list_markets = Map.keys(Agent.get(MarketPlaces, fn {_name, map} -> map end))
     {:ok, list_markets}
   end
 
@@ -309,7 +349,8 @@ defmodule BetUnfair do
   """
   @spec market_list_active() :: {:ok, [market_id()]}
   def market_list_active() do
-    list_active_markets = filter(Map.to_list(Agent.get(MarketPlaces, & &1)), fn {_id, {_pid, on?}} -> on? == :on end)
+    map_market = Agent.get(MarketPlaces, fn {_name, map} -> map end)
+    list_active_markets = filter(Map.to_list(map_market), fn {_id, {_pid, on?}} -> on? == :on end)
     list_active_markets = Enum.map(list_active_markets, fn {id, _} -> id end)
     {:ok, list_active_markets}
   end
@@ -326,7 +367,7 @@ defmodule BetUnfair do
   """
   @spec market_cancel(id :: market_id()):: :ok
   def market_cancel(id) do
-    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    market_agent = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id)
     if market_agent == [] do
       :ok
     else
@@ -352,7 +393,7 @@ defmodule BetUnfair do
   """
   @spec market_freeze(id :: market_id()):: :ok
   def market_freeze(id) do
-    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    market_agent = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id)
     if market_agent == [] do
       :ok
     else
@@ -375,7 +416,7 @@ defmodule BetUnfair do
   """
   @spec market_settle(id :: market_id(), result :: boolean()):: :ok
   def market_settle(id, result) do
-    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    market_agent = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id)
     if market_agent == [] do
       :error
     else
@@ -397,7 +438,7 @@ defmodule BetUnfair do
   """
   @spec market_bets(id :: market_id()) :: {:ok, Enumerable.t(bet_id())}
   def market_bets(id) do
-    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    market_agent = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id)
     if market_agent == [] do
       {:ok, []}
     else
@@ -420,7 +461,7 @@ defmodule BetUnfair do
   """
   @spec market_pending_backs(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
   def market_pending_backs(id) do
-    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    market_agent = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id)
     if market_agent == [] do
       {:ok, []}
     else
@@ -443,7 +484,7 @@ defmodule BetUnfair do
   """
   @spec market_pending_lays(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
   def market_pending_lays(id) do
-    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    market_agent = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id)
     if market_agent == [] do
       {:ok, []}
     else
@@ -472,8 +513,8 @@ defmodule BetUnfair do
   """
   @spec market_get(id :: user_id()) :: {:ok | :error, market()}
   def market_get(id) do
-    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
-    if market_agent == [] do
+    market_agent = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id)
+    if market_agent == :nil do
       {:error, %{}}
     else
       {market_pid, _on?} = market_agent
@@ -495,7 +536,7 @@ defmodule BetUnfair do
   """
   @spec market_match(id :: market_id()):: :ok
   def market_match(id) do
-    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    market_agent = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id)
     if market_agent == [] do
       :ok
     else
@@ -545,7 +586,7 @@ defmodule BetUnfair do
         updated_users = Map.put(users, user_id, updated_user)
         Process.put(:users, updated_users)
         # Create the new bet in the market
-        {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), market_id)
+        {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), market_id)
         GenServer.call(market_pid, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
       else
         :error
@@ -591,7 +632,7 @@ defmodule BetUnfair do
         updated_users = Map.put(users, user_id, updated_user)
         Process.put(:users, updated_users)
         # Create the new bet in the market
-        {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), market_id)
+        {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), market_id)
         GenServer.call(market_pid, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
       else
         :error
@@ -618,7 +659,7 @@ defmodule BetUnfair do
   # cancels the parts of a bet that has not been matched yet.
   def bet_cancel(id) do
     # Returning all stakes to users
-    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), id[:market])
+    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id[:market])
     amount = GenServer.call(market_pid, {:bet_cancel, id})
     user_deposit(id[:user], amount)
     :ok
@@ -636,12 +677,11 @@ defmodule BetUnfair do
       :ok
 
   """
-
   @spec bet_cancel_whole(id :: bet_id()) :: :ok
   # cancels the parts of a bet that has not been matched yet.
   def bet_cancel_whole(id) do
     # Returning all stakes to users
-    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), id[:market])
+    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id[:market])
     amount = GenServer.call(market_pid, {:bet_cancel_whole, id})
     user_deposit(id[:user], amount)
     :ok
@@ -659,10 +699,9 @@ defmodule BetUnfair do
       {:ok, {:back , 12, 14, 105, 100, 0, matched_bets: [15],:active {:market_settled, true}}}
 
   """
-
   @spec bet_get(id :: bet_id()) ::{:ok, bet()}
   def bet_get(id) do
-    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), id[:market])
+    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id[:market])
     GenServer.call(market_pid, {:bet_get, id})
   end
 
@@ -684,7 +723,7 @@ defmodule BetUnfair do
   @spec bet_settle(id :: bet_id(), result :: boolean()) :: :ok | :error
   def bet_settle(id, result) do
     {:ok, bet} = bet_get(id)
-    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), id[:market])
+    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id[:market])
     {back_win, lay_win, remaining_stake} = GenServer.call(market_pid,{:bet_settle, id, result})
     if (result) do
       if (bet[:bet_type] == :back) do
@@ -858,6 +897,10 @@ defmodule BetUnfair do
       lay_win = Kernel.trunc(betted/(bet[:odds]/100-1))+betted+bet[:remaining_stake]
       {:reply, {back_win, lay_win, bet[:remaining_stake]}, market_infos}
     end
+  end
+
+  def handle_call(:save_market, _from, market) do
+    {:reply, {:ok, market}, market}
   end
 
   def extract_info_bet(bet_id) do

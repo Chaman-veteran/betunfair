@@ -152,9 +152,6 @@ defmodule BetUnfair do
   """
   @spec user_deposit(id :: user_id(), amount :: integer()):: :ok | :error
   def user_deposit(id, amount) do
-    IO.inspect("USER DEPOSIT")
-    IO.inspect(user_get(id))
-    IO.inspect(amount)
     users = Process.get(:users)
     if Map.has_key?(users, id) and amount > 0 do
       {:ok, user} = Map.fetch(users, id)
@@ -535,8 +532,6 @@ defmodule BetUnfair do
                  stake :: integer(), odds :: integer()) :: {:ok, bet_id()} | :error
   # creates a backing bet by the specified user and for the market specified
   def bet_back(user_id, market_id, stake, odds) do
-    IO.inspect("BET BACK")
-    IO.inspect(user_get(user_id))
     {:ok, market} = market_get(market_id)
     if market[:status] == :active do
       can_bet? = user_withdraw(user_id, stake)
@@ -627,8 +622,6 @@ defmodule BetUnfair do
     # Returning all stakes to users
     [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, id[:market])
     amount = GenServer.call(market_pid, {:bet_cancel, id})
-    IO.inspect("BET CANCEL")
-    IO.inspect(amount)
     user_deposit(id[:user], amount)
     :ok
   end
@@ -693,12 +686,9 @@ defmodule BetUnfair do
   @spec bet_settle(id :: bet_id(), result :: boolean()) :: :ok | :error
   def bet_settle(id, result) do
     {:ok, bet} = bet_get(id)
-    IO.inspect("SETTLING THE BET : ")
-    IO.inspect(bet)
     [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, id[:market])
     {back_win, lay_win, remaining_stake} = GenServer.call(market_pid,{:bet_settle, id, result})
     if (result) do
-      IO.inspect(back_win)
       if (bet[:bet_type] == :back) do
         user_deposit(id[:user], back_win)
       else
@@ -706,7 +696,6 @@ defmodule BetUnfair do
         user_deposit(id[:user], remaining_stake)
       end
     else
-      IO.inspect(lay_win)
       if (bet[:bet_type] == :lay) do
         user_deposit(id[:user], lay_win)
       else
@@ -751,16 +740,13 @@ defmodule BetUnfair do
   end
 
   def handle_call(:market_pending_backs, _from, %{market: market_info, backs: backs, lays: lays}) do
-    # Remark : Sorting after constructing the list gives better performances
-    # if we do a bubblesort-like for sorting while constructing it we have a O(n^2)
-    # complexity while it's O(n+nlog(n)) = O(nlog(n)) for sorting after creating it.
-    get_bets = List.foldl(backs, [], fn bet_id, acc -> BetUnfair.extract_info_bet(bet_id, acc) end)
-    {:reply, {:ok, List.keysort(get_bets,0)}, %{market: market_info, backs: backs, lays: lays}}
+    get_bets = Enum.map(backs, fn bet_id -> BetUnfair.extract_info_bet(bet_id) end)
+    {:reply, {:ok, get_bets}, %{market: market_info, backs: backs, lays: lays}}
   end
 
   def handle_call(:market_pending_lays, _from, %{market: market_info, backs: backs, lays: lays}) do
-    get_bets = List.foldl(lays, [], fn bet_id, acc -> BetUnfair.extract_info_bet(bet_id, acc) end)
-    {:reply, {:ok, List.keysort(get_bets,0)}, %{market: market_info, backs: backs, lays: lays}}
+    get_bets = Enum.map(lays, fn bet_id -> BetUnfair.extract_info_bet(bet_id) end)
+    {:reply, {:ok, get_bets}, %{market: market_info, backs: backs, lays: lays}}
   end
 
   def handle_call(:market_get, _from, %{market: market_info, backs: backs, lays: lays}) do
@@ -872,19 +858,16 @@ defmodule BetUnfair do
       betted = bet[:original_stake] - bet[:remaining_stake]
       back_win = Kernel.trunc((bet[:odds]*betted)/100)+bet[:remaining_stake]
       lay_win = Kernel.trunc(betted/(bet[:odds]/100-1))+bet[:remaining_stake]
-      IO.inspect("handle_call bet_settle")
-      IO.inspect(back_win)
-      IO.inspect(lay_win)
       {:reply, {back_win, lay_win, bet[:remaining_stake]}, market_infos}
     end
   end
 
-  def extract_info_bet(bet_id, acc) do
+  def extract_info_bet(bet_id) do
     bet_infos = Process.get(bet_id)
     if bet_infos[:matched_bets] == [] do
-      [{bet_infos[:odds], bet_id} | acc]
+      {bet_infos[:odds], bet_id}
     else
-      acc
+      []
     end
   end
 
@@ -905,6 +888,7 @@ defmodule BetUnfair do
           # There's a match !
           allowed_to_loose = Kernel.trunc(get_back[:remaining_stake]*get_back[:odds]/100)-get_back[:remaining_stake]
           if allowed_to_loose >= get_lay[:remaining_stake] do
+            betted = Kernel.trunc(get_lay[:remaining_stake]/(get_back[:odds]/100-1))
             # We consume all of the lay stake
             updated_lay = %{ bet_type: get_lay[:bet_type],
                              market_id: get_lay[:market_id],
@@ -920,7 +904,7 @@ defmodule BetUnfair do
                               user_id: get_back[:user_id],
                               odds: get_back[:odds],
                               original_stake: get_back[:original_stake], # original stake
-                              remaining_stake: get_back[:remaining_stake]-get_lay[:remaining_stake], # non-matched stake
+                              remaining_stake: get_back[:remaining_stake]-betted, # non-matched stake
                               matched_bets: [ hlays | get_back[:matched_bets]], # list of matched bets
                               status: :active
                             }
@@ -962,7 +946,7 @@ defmodule BetUnfair do
   ########################
 
   def insert_by(elem, [], _, _) do
-	[elem]
+	  [elem]
   end
   def insert_by(elem, [head | tail], function, :asc) do
     if function.(head) <= function.(elem) do

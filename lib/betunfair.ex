@@ -563,7 +563,7 @@ defmodule BetUnfair do
   @spec market_match(id :: market_id()):: :ok
   def market_match(id) do
     market_agent = Map.get(Agent.get(MarketPlaces, fn {_name, map} -> map end), id)
-    if market_agent == [] do
+    if market_agent == :nil do
       :ok
     else
       {market_pid, _on?} = market_agent

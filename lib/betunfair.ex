@@ -46,6 +46,7 @@ defmodule BetUnfair do
   Start of the exchange place.
   If an exchange name does not already exist it is created.
   If it exists the existing data (markets, bets, users) is recovered.
+  If an exchange place is already running, it's returning :error.
 
   ## Parameters
     - name, which is the name of the market created
@@ -56,11 +57,26 @@ defmodule BetUnfair do
       {:ok, %{}}
 
   """
-  @spec start_link(name :: String.t()) :: {:ok, String.t()}
+  @spec start_link(name :: String.t()) :: {:ok, String.t()} | :error
   def start_link(name) do
-    Agent.start_link(fn -> {name, %{}} end, name: MarketPlaces)
-    Process.put(:agentCreated?, true)
-    {:ok, name}
+    db = Process.get(:db)
+    if Process.put(:agentCreated?, true) do
+      :error
+    else
+      Process.put(:agentCreated?, true)
+      Agent.start_link(fn -> {name, %{}} end, name: MarketPlaces)
+      if db == :nil or CubDB.get(db, name) == :nil do
+        # It's a new exchange place, everything's already done
+      else
+        # We have to retrive the data
+        %{users: users, counter: counter, markets: data_markets} = CubDB.get(db, name)
+        Process.put(:users, users)
+        Process.put(:counter, counter)
+        # Fold to do them in sequence to avoid pid's table issues
+        List.foldl(data_markets, :nil, fn market,_acc -> market_restart(market) end)
+      end
+      {:ok, name}
+    end
   end
 
   @doc """
@@ -84,7 +100,7 @@ defmodule BetUnfair do
     db = Process.get(:db)
     ## Preserving exchange data
     {name, markets_map} = Agent.get(MarketPlaces, & &1)
-    fold_data =  fn {_, {pid, _}}, acc -> [GenServer.call(pid, :save_market) | acc] end
+    fold_data =  fn {_, {pid, _}}, acc -> [elem(GenServer.call(pid, :save_market),1) | acc] end
     data_markets = Enum.reduce(markets_map, [], fold_data)
     data_saved = %{users: Process.get(:users, %{}), counter: Process.get(:counter,0), markets: data_markets}
     CubDB.put(db, name, data_saved)
@@ -96,6 +112,7 @@ defmodule BetUnfair do
     # Stopping the GenServers
     Enum.map(markets_map, fn {_, {pid, _}} -> GenServer.stop(pid) end)
     Agent.stop(MarketPlaces)
+    Process.put(:agentCreated?, false)
     :ok
   end
 
@@ -122,6 +139,7 @@ defmodule BetUnfair do
         # Stopping the GenServers
         Enum.map(markets_map, fn {_, {pid, _}} -> GenServer.stop(pid) end)
         Agent.stop(MarketPlaces)
+        Process.put(:agentCreated?, false)
       else
         db = Process.get(:db)
         if db == :nil do
@@ -130,10 +148,9 @@ defmodule BetUnfair do
           CubDB.delete(db, name)
         end
       end
-      :ok
     else
-      :ok
     end
+    :ok
   end
 
   ##########################
@@ -313,14 +330,23 @@ defmodule BetUnfair do
     {:ok, name}
   end
 
+  def market_restart(%{market: market_info, backs: backs, lays: lays}) do
+    {:ok, pid} = GenServer.start_link(BetUnfair, %{market: market_info, backs: backs, lays: lays})
+    %{name: name} = market_info
+    Agent.update(MarketPlaces, fn {name_exchange, map} -> {name_exchange, (Map.put(map, name, {pid, :on}))} end)
+    :nil
+  end
+
   @doc """
   GenServer function associated to market_create.
   Initialize the GenServer state.
   """
-  @spec init({name :: String.t(), description :: String.t()}) :: {:ok, market_place()}
   def init({name, description}) do
     market_info = %{name: name, description: description, status: :active}
     {:ok, %{market: market_info, backs: [], lays: []}}
+  end
+  def init(%{market: market_info, backs: backs, lays: lays}) do
+    {:ok, %{market: market_info, backs: backs, lays: lays}}
   end
 
   @doc """

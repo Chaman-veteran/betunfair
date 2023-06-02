@@ -55,13 +55,13 @@ defmodule BetUnfair do
 
   """
 
-  @spec start_link(name :: String.t()) :: {:ok, market_place()}
+  @spec start_link(name :: String.t()) :: {:ok, String.t()}
   def start_link(name) do
     try do
       Registry.start_link(keys: :unique, name: Registry.MarketsPlaces)
     catch _ -> :nil
     end
-    market_create(name, :nil)
+    {:ok, name}
   end
 
   @doc """
@@ -857,7 +857,7 @@ defmodule BetUnfair do
       Process.put(bet_id, updated_bet)
       betted = bet[:original_stake] - bet[:remaining_stake]
       back_win = Kernel.trunc((bet[:odds]*betted)/100)+bet[:remaining_stake]
-      lay_win = Kernel.trunc(betted/(bet[:odds]/100-1))+bet[:remaining_stake]
+      lay_win = Kernel.trunc(betted/(bet[:odds]/100-1))+betted+bet[:remaining_stake]
       {:reply, {back_win, lay_win, bet[:remaining_stake]}, market_infos}
     end
   end
@@ -913,12 +913,13 @@ defmodule BetUnfair do
             matching_algorithm(backs, tlays)
           else
             # We consume all of the backing stake
+            consummed = Kernel.trunc(get_back[:remaining_stake]*(get_back[:odds]/100-1))
             updated_lay = %{ bet_type: get_lay[:bet_type],
                              market_id: get_lay[:market_id],
                              user_id: get_lay[:user_id],
                              odds: get_lay[:odds],
                              original_stake: get_lay[:original_stake], # original stake
-                             remaining_stake: get_lay[:remaining_stake]-get_back[:remaining_stake], # non-matched stake
+                             remaining_stake: get_lay[:remaining_stake]-consummed, # non-matched stake
                              matched_bets: [ hbacks | get_lay[:matched_bets]], # list of matched bets
                              status: :active
                             }

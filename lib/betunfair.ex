@@ -3,6 +3,7 @@ defmodule BetUnfair do
   Documentation for `BetUnfair`.
   """
   use GenServer
+  use Agent
   ## Variations in the API were made iff we added the error  ##
   ## support for higher robustness                           ##
 
@@ -54,13 +55,9 @@ defmodule BetUnfair do
       {:ok, %{}}
 
   """
-
   @spec start_link(name :: String.t()) :: {:ok, String.t()}
   def start_link(name) do
-    try do
-      Registry.start_link(keys: :unique, name: Registry.MarketsPlaces)
-    catch _ -> :nil
-    end
+    Agent.start_link(fn -> %{} end, name: MarketPlaces)
     {:ok, name}
   end
 
@@ -271,7 +268,8 @@ defmodule BetUnfair do
   """
   @spec market_create(name :: String.t(), description :: String.t()) :: {:ok, market_id()}
   def market_create(name, description) do
-    GenServer.start_link(BetUnfair, {name, description})
+    {:ok, pid} = GenServer.start_link(BetUnfair, {name, description})
+    Agent.update(MarketPlaces, &(Map.put(&1, name, {pid, :on})))
     {:ok, name}
   end
 
@@ -282,7 +280,6 @@ defmodule BetUnfair do
   @spec init({name :: String.t(), description :: String.t()}) :: {:ok, market_place()}
   def init({name, description}) do
     market_info = %{name: name, description: description, status: :active}
-    Registry.register(Registry.MarketsPlaces, name, :on)
     {:ok, %{market: market_info, backs: [], lays: []}}
   end
 
@@ -297,7 +294,7 @@ defmodule BetUnfair do
   """
   @spec market_list() :: {:ok, [market_id()]}
   def market_list() do
-    list_markets = Registry.select(Registry.MarketsPlaces, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    list_markets = Map.keys(Agent.get(MarketPlaces, & &1))
     {:ok, list_markets}
   end
 
@@ -312,7 +309,8 @@ defmodule BetUnfair do
   """
   @spec market_list_active() :: {:ok, [market_id()]}
   def market_list_active() do
-    list_active_markets = Registry.select(Registry.MarketsPlaces, [{{:"$1", :_, :on}, [], [:"$1"]}])
+    list_active_markets = filter(Map.to_list(Agent.get(MarketPlaces, & &1)), fn {_id, {_pid, on?}} -> on? == :on end)
+    list_active_markets = Enum.map(list_active_markets, fn {id, _} -> id end)
     {:ok, list_active_markets}
   end
 
@@ -328,11 +326,11 @@ defmodule BetUnfair do
   """
   @spec market_cancel(id :: market_id()):: :ok
   def market_cancel(id) do
-    list_matched = Registry.lookup(Registry.MarketsPlaces, id)
-    if list_matched == [] do
+    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    if market_agent == [] do
       :ok
     else
-      [{market, _on?}] = list_matched
+      {market, _on?} = market_agent
       {:ok, list_bets} = GenServer.call(market, :market_cancel)
       # We could use map but it may be executed in //
       # and if so, it could give weird results
@@ -354,11 +352,11 @@ defmodule BetUnfair do
   """
   @spec market_freeze(id :: market_id()):: :ok
   def market_freeze(id) do
-    list_matched = Registry.lookup(Registry.MarketsPlaces, id)
-    if list_matched == [] do
+    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    if market_agent == [] do
       :ok
     else
-      [{market, _on?}] = list_matched
+      {market, _on?} = market_agent
       {:ok, list_bets} = GenServer.call(market, :market_freeze)
       List.foldl(list_bets, :nil, fn bet_id, _acc -> bet_cancel(bet_id) end)
       :ok
@@ -377,11 +375,11 @@ defmodule BetUnfair do
   """
   @spec market_settle(id :: market_id(), result :: boolean()):: :ok
   def market_settle(id, result) do
-    list_matched = Registry.lookup(Registry.MarketsPlaces, id)
-    if list_matched == [] do
+    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    if market_agent == [] do
       :error
     else
-      [{market, _on?}] = list_matched
+      {market, _on?} = market_agent
       {:ok, list_bets} = GenServer.call(market, {:market_settle, result})
       List.foldl(list_bets, :nil, fn bet_id, _acc -> bet_settle(bet_id,result) end)
       :ok
@@ -399,11 +397,11 @@ defmodule BetUnfair do
   """
   @spec market_bets(id :: market_id()) :: {:ok, Enumerable.t(bet_id())}
   def market_bets(id) do
-    list_matched = Registry.lookup(Registry.MarketsPlaces, id)
-    if list_matched == [] do
+    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    if market_agent == [] do
       {:ok, []}
     else
-      [{market_pid, _on?}] = list_matched
+      {market_pid, _on?} = market_agent
       GenServer.call(market_pid, :market_bets)
     end
   end
@@ -422,11 +420,11 @@ defmodule BetUnfair do
   """
   @spec market_pending_backs(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
   def market_pending_backs(id) do
-    list_matched = Registry.lookup(Registry.MarketsPlaces, id)
-    if list_matched == [] do
+    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    if market_agent == [] do
       {:ok, []}
     else
-      [{market_pid, _on?}] = list_matched
+      {market_pid, _on?} = market_agent
       GenServer.call(market_pid, :market_pending_backs)
     end
   end
@@ -445,11 +443,11 @@ defmodule BetUnfair do
   """
   @spec market_pending_lays(id :: market_id()) :: {:ok, Enumerable.t({integer(), bet_id()})}
   def market_pending_lays(id) do
-    list_matched = Registry.lookup(Registry.MarketsPlaces, id)
-    if list_matched == [] do
+    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    if market_agent == [] do
       {:ok, []}
     else
-      [{market_pid, _on?}] = list_matched
+      {market_pid, _on?} = market_agent
       GenServer.call(market_pid, :market_pending_lays)
     end
   end
@@ -474,11 +472,11 @@ defmodule BetUnfair do
   """
   @spec market_get(id :: user_id()) :: {:ok | :error, market()}
   def market_get(id) do
-    list_matched = Registry.lookup(Registry.MarketsPlaces, id)
-    if list_matched == [] do
+    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    if market_agent == [] do
       {:error, %{}}
     else
-      [{market_pid, _on?}] = list_matched
+      {market_pid, _on?} = market_agent
       GenServer.call(market_pid, :market_get)
     end
   end
@@ -497,11 +495,11 @@ defmodule BetUnfair do
   """
   @spec market_match(id :: market_id()):: :ok
   def market_match(id) do
-    list_matched = Registry.lookup(Registry.MarketsPlaces, id)
-    if list_matched == [] do
+    market_agent = Map.get(Agent.get(MarketPlaces, & &1), id)
+    if market_agent == [] do
       :ok
     else
-      [{market_pid, _on?}] = list_matched
+      {market_pid, _on?} = market_agent
       GenServer.call(market_pid, :market_match)
     end
   end
@@ -547,7 +545,7 @@ defmodule BetUnfair do
         updated_users = Map.put(users, user_id, updated_user)
         Process.put(:users, updated_users)
         # Create the new bet in the market
-        [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, market_id)
+        {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), market_id)
         GenServer.call(market_pid, {:new_bet, bet_id, market_id, user_id, :back, odds, stake})
       else
         :error
@@ -593,7 +591,7 @@ defmodule BetUnfair do
         updated_users = Map.put(users, user_id, updated_user)
         Process.put(:users, updated_users)
         # Create the new bet in the market
-        [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, market_id)
+        {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), market_id)
         GenServer.call(market_pid, {:new_bet, bet_id, market_id, user_id, :lay, odds, stake})
       else
         :error
@@ -620,7 +618,7 @@ defmodule BetUnfair do
   # cancels the parts of a bet that has not been matched yet.
   def bet_cancel(id) do
     # Returning all stakes to users
-    [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, id[:market])
+    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), id[:market])
     amount = GenServer.call(market_pid, {:bet_cancel, id})
     user_deposit(id[:user], amount)
     :ok
@@ -643,7 +641,7 @@ defmodule BetUnfair do
   # cancels the parts of a bet that has not been matched yet.
   def bet_cancel_whole(id) do
     # Returning all stakes to users
-    [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, id[:market])
+    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), id[:market])
     amount = GenServer.call(market_pid, {:bet_cancel_whole, id})
     user_deposit(id[:user], amount)
     :ok
@@ -664,7 +662,7 @@ defmodule BetUnfair do
 
   @spec bet_get(id :: bet_id()) ::{:ok, bet()}
   def bet_get(id) do
-    [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, id[:market])
+    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), id[:market])
     GenServer.call(market_pid, {:bet_get, id})
   end
 
@@ -686,7 +684,7 @@ defmodule BetUnfair do
   @spec bet_settle(id :: bet_id(), result :: boolean()) :: :ok | :error
   def bet_settle(id, result) do
     {:ok, bet} = bet_get(id)
-    [{market_pid, _on?}] = Registry.lookup(Registry.MarketsPlaces, id[:market])
+    {market_pid, _on?} = Map.get(Agent.get(MarketPlaces, & &1), id[:market])
     {back_win, lay_win, remaining_stake} = GenServer.call(market_pid,{:bet_settle, id, result})
     if (result) do
       if (bet[:bet_type] == :back) do
@@ -945,6 +943,17 @@ defmodule BetUnfair do
   ########################
   #### MISC FUNCTIONS ####
   ########################
+
+  defp filter([],_) do
+    []
+  end
+  defp filter([head | tail], p) do
+    if p.(head) do
+      [head | filter(tail, p)]
+    else
+      filter(tail,p)
+    end
+  end
 
   def insert_by(elem, [], _, _) do
 	  [elem]

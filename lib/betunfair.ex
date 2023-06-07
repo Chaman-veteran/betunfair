@@ -1,6 +1,6 @@
-defmodule BetUnfair do
+defmodule Betunfair do
   @moduledoc """
-  Documentation for `BetUnfair`.
+  Documentation for `Betunfair`.
   """
   use GenServer
   use Agent
@@ -25,12 +25,13 @@ defmodule BetUnfair do
                              :frozen |
                              :cancelled |
                              {:settled, result::bool()}}
-  @type bet :: %{ bet_type: :back | :lay,
+  @type bet :: %{ id: bet_id(),
+                  bet_type: :back | :lay,
                   market_id: market_id(),
                   user_id: user_id(),
                   odds: integer(),
                   original_stake: integer(), # original stake
-                  remaining_stake: integer(), # non-matched stake
+                  stake: integer(), # non-matched stake
                   matched_bets: [bet_id()], # list of matched bets
                   status: :active |
                           :cancelled |
@@ -128,7 +129,7 @@ defmodule BetUnfair do
       :ok
 
   """
-  @spec clean(name :: String.t()):: :ok
+  @spec clean(name :: String.t()):: {:ok, String.t()}
   def clean(name) do
     if Process.get(:agentCreated?) do
       {name_actual, markets_map} = Agent.get(MarketPlaces, & &1)
@@ -150,7 +151,7 @@ defmodule BetUnfair do
       end
     else
     end
-    :ok
+    {:ok, name}
   end
 
   ##########################
@@ -325,13 +326,13 @@ defmodule BetUnfair do
   """
   @spec market_create(name :: String.t(), description :: String.t()) :: {:ok, market_id()}
   def market_create(name, description) do
-    {:ok, pid} = GenServer.start_link(BetUnfair, {name, description})
+    {:ok, pid} = GenServer.start_link(Betunfair, {name, description})
     Agent.update(MarketPlaces, fn {name_exchange, map} -> {name_exchange, (Map.put(map, name, {pid, :on}))} end)
     {:ok, name}
   end
 
   def market_restart(%{market: market_info, backs: backs, lays: lays}) do
-    {:ok, pid} = GenServer.start_link(BetUnfair, %{market: market_info, backs: backs, lays: lays})
+    {:ok, pid} = GenServer.start_link(Betunfair, %{market: market_info, backs: backs, lays: lays})
     %{name: name} = market_info
     Agent.update(MarketPlaces, fn {name_exchange, map} -> {name_exchange, (Map.put(map, name, {pid, :on}))} end)
     :nil
@@ -722,7 +723,7 @@ defmodule BetUnfair do
   ## Examples
 
       iex> Betunfair.bet_get(15)
-      {:ok, {:back , 12, 14, 105, 100, 0, matched_bets: [15],:active {:market_settled, true}}}
+      {:ok, {15, :back , 12, 14, 105, 100, 0, matched_bets: [15],:active {:market_settled, true}}}
 
   """
   @spec bet_get(id :: bet_id()) ::{:ok, bet()}
@@ -803,12 +804,12 @@ defmodule BetUnfair do
   end
 
   def handle_call(:market_pending_backs, _from, %{market: market_info, backs: backs, lays: lays}) do
-    get_bets = Enum.map(backs, fn bet_id -> BetUnfair.extract_info_bet(bet_id) end)
+    get_bets = Enum.map(backs, fn bet_id -> Betunfair.extract_info_bet(bet_id) end)
     {:reply, {:ok, get_bets}, %{market: market_info, backs: backs, lays: lays}}
   end
 
   def handle_call(:market_pending_lays, _from, %{market: market_info, backs: backs, lays: lays}) do
-    get_bets = Enum.map(lays, fn bet_id -> BetUnfair.extract_info_bet(bet_id) end)
+    get_bets = Enum.map(lays, fn bet_id -> Betunfair.extract_info_bet(bet_id) end)
     {:reply, {:ok, get_bets}, %{market: market_info, backs: backs, lays: lays}}
   end
 
@@ -829,12 +830,13 @@ defmodule BetUnfair do
     # else, error is returned
     %{status: market_status} = market_info
     if bet == :nil && market_status == :active do
-      bet_infos = %{ bet_type: bet_type,
+      bet_infos = %{ id: bet_id,
+                     bet_type: bet_type,
                      market_id: market_id,
                      user_id: user_id,
                      odds: odds,
                      original_stake: stake, # original stake
-                     remaining_stake: stake, # non-matched stake
+                     stake: stake, # non-matched stake
                      matched_bets: [], # list of matched bets
                      status: :active
                    }
@@ -860,17 +862,18 @@ defmodule BetUnfair do
         {:reply, :ok, market_infos} # if there is no bet to cancel, ok
       bet ->
         # if there is a bet, we cancel it and return the stake to the user.
-        updated_bet = %{ bet_type: bet[:bet_type],
+        updated_bet = %{ id: bet_id,
+                         bet_type: bet[:bet_type],
                          market_id: bet[:market_id],
                          user_id: bet[:user_id],
                          odds: bet[:odds],
-                         original_stake: bet[:original_stake]-bet[:remaining_stake], # we cancelled the other
-                         remaining_stake: 0, # non-matched stake
+                         original_stake: bet[:original_stake]-bet[:stake], # we cancelled the other
+                         stake: 0, # non-matched stake
                          matched_bets: bet[:matched_bets], # list of matched bets
                          status: :active
                       }
         Process.put(bet_id, updated_bet)
-		    {:reply, bet[:remaining_stake], market_infos}
+		    {:reply, bet[:stake], market_infos}
 	  end
   end
 
@@ -880,12 +883,13 @@ defmodule BetUnfair do
         {:reply, :ok, market_infos} # if there is no bet to cancel, ok
       bet ->
         # if there is a bet, we cancel it and return the stake to the user.
-        updated_bet = %{ bet_type: bet[:bet_type],
+        updated_bet = %{ id: bet_id,
+                         bet_type: bet[:bet_type],
                          market_id: bet[:market_id],
                          user_id: bet[:user_id],
                          odds: bet[:odds],
                          original_stake: bet[:original_stake], # original stake
-                         remaining_stake: bet[:original_stake], # non-matched stake
+                         stake: bet[:original_stake], # non-matched stake
                          matched_bets: [], # list of matched bets
                          status: :cancelled
                       }
@@ -908,20 +912,21 @@ defmodule BetUnfair do
     if bet == :nil or bet[:status] != :active do
       {:reply, {0, 0, 0}, market_infos}
     else
-      updated_bet = %{ bet_type: bet[:bet_type],
+      updated_bet = %{ id: bet_id,
+                       bet_type: bet[:bet_type],
                        market_id: bet[:market_id],
                        user_id: bet[:user_id],
                        odds: bet[:odds],
                        original_stake: bet[:original_stake], # original stake
-                       remaining_stake: bet[:remaining_stake], # non-matched stake
+                       stake: bet[:stake], # non-matched stake
                        matched_bets: [], # list of matched bets
                        status: {:settled, result}
                     }
       Process.put(bet_id, updated_bet)
-      betted = bet[:original_stake] - bet[:remaining_stake]
-      back_win = Kernel.trunc((bet[:odds]*betted)/100)+bet[:remaining_stake]
-      lay_win = Kernel.trunc(betted/(bet[:odds]/100-1))+betted+bet[:remaining_stake]
-      {:reply, {back_win, lay_win, bet[:remaining_stake]}, market_infos}
+      betted = bet[:original_stake] - bet[:stake]
+      back_win = Kernel.trunc((bet[:odds]*betted)/100)+bet[:stake]
+      lay_win = Kernel.trunc(betted/(bet[:odds]/100-1))+betted+bet[:stake]
+      {:reply, {back_win, lay_win, bet[:stake]}, market_infos}
     end
   end
 
@@ -945,24 +950,24 @@ defmodule BetUnfair do
       {[hbacks | tbacks], [hlays | tlays]} ->
         get_back = Process.get(hbacks)
         get_lay = Process.get(hlays)
-        if get_back[:status] != :active || get_back[:remaining_stake] == 0 do
+        if get_back[:status] != :active || get_back[:stake] == 0 do
           matching_algorithm(tbacks, lays)
         end
-        if get_lay[:status] != :active || get_lay[:remaining_stake] == 0 do
+        if get_lay[:status] != :active || get_lay[:stake] == 0 do
           matching_algorithm(backs, tlays)
         end
         if get_back[:odds] <= get_lay[:odds] do
           # There's a match !
-          allowed_to_loose = Kernel.trunc(get_back[:remaining_stake]*get_back[:odds]/100)-get_back[:remaining_stake]
-          if allowed_to_loose >= get_lay[:remaining_stake] do
-            betted = Kernel.trunc(get_lay[:remaining_stake]/(get_back[:odds]/100-1))
+          allowed_to_loose = Kernel.trunc(get_back[:stake]*get_back[:odds]/100)-get_back[:stake]
+          if allowed_to_loose >= get_lay[:stake] do
+            betted = Kernel.trunc(get_lay[:stake]/(get_back[:odds]/100-1))
             # We consume all of the lay stake
             updated_lay = %{ bet_type: get_lay[:bet_type],
                              market_id: get_lay[:market_id],
                              user_id: get_lay[:user_id],
                              odds: get_lay[:odds],
                              original_stake: get_lay[:original_stake], # original stake
-                             remaining_stake: 0, # non-matched stake
+                             stake: 0, # non-matched stake
                              matched_bets: [ hbacks | get_lay[:matched_bets]], # list of matched bets
                              status: :active
                             }
@@ -971,7 +976,7 @@ defmodule BetUnfair do
                               user_id: get_back[:user_id],
                               odds: get_back[:odds],
                               original_stake: get_back[:original_stake], # original stake
-                              remaining_stake: get_back[:remaining_stake]-betted, # non-matched stake
+                              stake: get_back[:stake]-betted, # non-matched stake
                               matched_bets: [ hlays | get_back[:matched_bets]], # list of matched bets
                               status: :active
                             }
@@ -980,13 +985,13 @@ defmodule BetUnfair do
             matching_algorithm(backs, tlays)
           else
             # We consume all of the backing stake
-            consummed = Kernel.trunc(get_back[:remaining_stake]*(get_back[:odds]/100-1))
+            consummed = Kernel.trunc(get_back[:stake]*(get_back[:odds]/100-1))
             updated_lay = %{ bet_type: get_lay[:bet_type],
                              market_id: get_lay[:market_id],
                              user_id: get_lay[:user_id],
                              odds: get_lay[:odds],
                              original_stake: get_lay[:original_stake], # original stake
-                             remaining_stake: get_lay[:remaining_stake]-consummed, # non-matched stake
+                             stake: get_lay[:stake]-consummed, # non-matched stake
                              matched_bets: [ hbacks | get_lay[:matched_bets]], # list of matched bets
                              status: :active
                             }
@@ -995,7 +1000,7 @@ defmodule BetUnfair do
                               user_id: get_back[:user_id],
                               odds: get_back[:odds],
                               original_stake: get_back[:original_stake], # original stake
-                              remaining_stake: 0, # non-matched stake
+                              stake: 0, # non-matched stake
                               matched_bets: [ hlays | get_back[:matched_bets]], # list of matched bets
                               status: :active
                             }
